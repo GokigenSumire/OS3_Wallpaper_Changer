@@ -43,7 +43,7 @@ class P0WallpaperService : GLWallpaperService() {
             addAction(Intent.ACTION_SCREEN_ON)
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_USER_PRESENT)
-        }, ContextCompat.RECEIVER_NOT_EXPORTED)
+        }, ContextCompat.RECEIVER_EXPORTED)
         P0Diagnostics.screen(this, "SERVICE", "CREATE", null)
     }
 
