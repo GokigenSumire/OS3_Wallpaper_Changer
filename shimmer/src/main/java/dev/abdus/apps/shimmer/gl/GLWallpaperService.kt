@@ -116,17 +116,20 @@ private object EglDisplayPool {
         return checkNotNull(display)
     }
 
-    @Synchronized fun release() {
-        if (users == 0) return
+    @Synchronized fun release(): Int? {
+        if (users == 0) return null
         users--
         if (users == 0) {
-            EGL14.eglTerminate(display)
+            val failure = if (EGL14.eglTerminate(display)) null else EGL14.eglGetError()
             display = null
+            return failure
         }
+        return null
     }
 }
 
 private class EglFailure(val operation: String, val code: Int) : RuntimeException(operation)
+private class GlFailure(val operation: String, val code: Int) : RuntimeException(operation)
 
 /** Accessed exclusively on its owning GLThread. */
 private class EglHelper(
@@ -231,7 +234,7 @@ private class EglHelper(
 
     fun finish() {
         destroyContext()
-        if (display != null) EglDisplayPool.release()
+        if (display != null) EglDisplayPool.release()?.let { error("terminate", it) }
         display = null
         config = null
     }
@@ -477,14 +480,21 @@ private class GLThread(
     }
 
     private fun checkGl(operation: String) {
+        var firstError = GLES30.GL_NO_ERROR
         repeat(8) {
             val code = GLES30.glGetError()
-            if (code == GLES30.GL_NO_ERROR) return
+            if (code == GLES30.GL_NO_ERROR) {
+                if (firstError != GLES30.GL_NO_ERROR) throw GlFailure(operation, firstError)
+                return
+            }
+            if (firstError == GLES30.GL_NO_ERROR) firstError = code
             errorCount++
             emit("gl_error", "operation=$operation code=$code")
             // GLES context loss forbids further GL cleanup; EGL release remains safe.
             if (code == 0x0507) throw EglFailure("gl_context_lost", EGL14.EGL_CONTEXT_LOST)
         }
+        // Stop an invalid render loop instead of flooding diagnostics every animation frame.
+        throw GlFailure(operation, firstError)
     }
 
     private fun emit(event: String, details: String = "") {
