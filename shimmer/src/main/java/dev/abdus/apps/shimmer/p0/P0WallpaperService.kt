@@ -17,6 +17,7 @@ import dev.abdus.apps.shimmer.ShimmerRenderer
 import dev.abdus.apps.shimmer.gl.GLWallpaperService
 import dev.abdus.apps.shimmer.recycleAll
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicReference
 
 /** P0 isolates diagnostic state from upstream playback, Room, timers and preview side effects. */
 class P0WallpaperService : GLWallpaperService() {
@@ -65,7 +66,8 @@ class P0WallpaperService : GLWallpaperService() {
         private var fixture: ImageSet? = null // Main-thread receipt of completed GL upload, not just queue acceptance.
         private val ownedImages = mutableSetOf<ImageSet>() // Main thread; covers every accepted, unconsumed payload.
         private var glFixture: ImageSet? = null // GL thread only.
-        @Volatile private var pendingUpload: PendingUpload? = null
+        /** Atomic hand-off: the main thread may replace a queued image while GL is taking it. */
+        private val pendingUpload = AtomicReference<PendingUpload?>(null)
         private var uploadQueued = false
         private data class PendingUpload(val image: ImageSet, val generation: Int)
         private val loader = Executors.newSingleThreadExecutor()
@@ -121,19 +123,19 @@ class P0WallpaperService : GLWallpaperService() {
         private fun publish(image: ImageSet) {
             val generation = loadGeneration
             ownedImages.add(image)
-            val previousPending = pendingUpload
-            pendingUpload = PendingUpload(image, generation)
-            if (previousPending != null) releaseOwned(previousPending.image)
+            val previousPending = pendingUpload.getAndSet(PendingUpload(image, generation))
+            previousPending?.let { releaseOwned(it.image) }
             scheduleUploadIfNeeded()
         }
 
         /** Main-thread scheduler keeps at most one GL upload closure and only the newest payload. */
         private fun scheduleUploadIfNeeded() {
-            if (destroyed || uploadQueued || pendingUpload == null) return
+            if (destroyed || uploadQueued || pendingUpload.get() == null) return
             uploadQueued = true
             val accepted = queueEvent {
-                val pending = pendingUpload
-                pendingUpload = null
+                // Atomic get-and-clear prevents publish() from replacing and recycling this
+                // payload between the read and the clear on the GL thread.
+                val pending = pendingUpload.getAndSet(null)
                 main.post {
                     uploadQueued = false
                     scheduleUploadIfNeeded()
@@ -148,9 +150,9 @@ class P0WallpaperService : GLWallpaperService() {
                     renderer.enableBlur(false, true)
                     glFixture = pending.image
                     main.post {
-                        if (destroyed || pending.generation != loadGeneration) {
-                            releaseOwned(pending.image)
-                        } else {
+                        if (!destroyed) {
+                            // The renderer now owns the target state. Keep this ImageSet until a
+                            // later setImage replaces it or Engine destruction joins the GL thread.
                             fixture = pending.image
                             if (previous != null && previous !== pending.image) releaseOwned(previous)
                             P0Diagnostics.event(scopeId, "FIXTURE_UPLOAD_ACK", "testImage=${pending.image.id} generation=${pending.generation} " +
@@ -161,8 +163,7 @@ class P0WallpaperService : GLWallpaperService() {
             }
             if (!accepted) {
                 uploadQueued = false
-                val rejected = pendingUpload
-                pendingUpload = null
+                val rejected = pendingUpload.getAndSet(null)
                 rejected?.let { releaseOwned(it.image) }
                 P0Diagnostics.event(scopeId, "FIXTURE_QUEUE_REJECTED", "configRetained=true")
             } else {
@@ -237,7 +238,7 @@ class P0WallpaperService : GLWallpaperService() {
             super.onDestroy() // Joins GL thread before CPU bitmaps can be recycled.
             ownedImages.forEach { it.recycleAll() }
             ownedImages.clear()
-            pendingUpload = null
+            pendingUpload.getAndSet(null)
             uploadQueued = false
             fixture = null
             P0Diagnostics.event(scopeId, "ENGINE_DESTROY", "surfaceGeneration=$surfaceGeneration")
