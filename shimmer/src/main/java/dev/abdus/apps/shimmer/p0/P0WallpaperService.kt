@@ -61,8 +61,10 @@ class P0WallpaperService : GLWallpaperService() {
         private var visible = false
         private var destroyed = false
         private var surfaceGeneration = 0
-        private var loadGeneration = 0
-        private var fixture: ImageSet? = null // Ownership: main thread; released after GL upload/join.
+        @Volatile private var loadGeneration = 0
+        private var fixture: ImageSet? = null // Main-thread receipt of completed GL upload, not just queue acceptance.
+        private val ownedImages = mutableSetOf<ImageSet>() // Main thread; covers every accepted, unconsumed payload.
+        private var glFixture: ImageSet? = null // GL thread only.
         private val loader = Executors.newSingleThreadExecutor()
         private lateinit var renderer: ShimmerRenderer
         private lateinit var gestures: P0GestureDetector
@@ -114,21 +116,36 @@ class P0WallpaperService : GLWallpaperService() {
         }
 
         private fun publish(image: ImageSet) {
-            val previous = fixture
-            // Renderer owns CPU references too. Keep new payload for every future context restore.
+            val generation = loadGeneration
+            ownedImages.add(image)
             if (queueEvent {
-                renderer.setEffectTransitionDuration(0)
-                renderer.setImage(image)
-                renderer.enableBlur(false, true)
-                previous?.recycleAll()
-                P0Diagnostics.event(scopeId, "FIXTURE_UPLOADED", "testImage=${image.id}")
+                if (generation != loadGeneration) {
+                    main.post { releaseOwned(image) }
+                } else {
+                    val previous = glFixture
+                    renderer.setEffectTransitionDuration(0)
+                    renderer.setImage(image)
+                    renderer.enableBlur(false, true)
+                    glFixture = image
+                    main.post {
+                        if (!destroyed && generation == loadGeneration) {
+                            fixture = image
+                            if (previous != null && previous !== image) releaseOwned(previous)
+                            P0Diagnostics.event(scopeId, "FIXTURE_UPLOAD_ACK", "testImage=${image.id} generation=$generation " +
+                                "presentedUnconfirmed=true")
+                        }
+                    }
+                }
             }) {
-                fixture = image
                 requestRender()
             } else {
-                image.recycleAll()
+                releaseOwned(image)
                 P0Diagnostics.event(scopeId, "FIXTURE_QUEUE_REJECTED", "configRetained=true")
             }
+        }
+
+        private fun releaseOwned(image: ImageSet) {
+            if (ownedImages.remove(image)) image.recycleAll()
         }
 
         override fun onRendererReady() {
@@ -192,7 +209,9 @@ class P0WallpaperService : GLWallpaperService() {
             gestures.close()
             loader.shutdownNow()
             super.onDestroy() // Joins GL thread before CPU bitmaps can be recycled.
-            fixture?.recycleAll()
+            ownedImages.forEach { it.recycleAll() }
+            ownedImages.clear()
+            fixture = null
             P0Diagnostics.event(scopeId, "ENGINE_DESTROY", "surfaceGeneration=$surfaceGeneration")
         }
     }

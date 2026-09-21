@@ -8,6 +8,7 @@ plugins {
 android {
     namespace 'dev.abdus.apps.shimmer'
     compileSdk libs.versions.compileSdk.get().toInteger()
+    buildToolsVersion '35.0.0'
 
     defaultConfig {
         applicationId "personal.wallpaper.os3"

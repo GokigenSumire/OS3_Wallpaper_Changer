@@ -1,14 +1,15 @@
 name: Build Release APK
 
 on:
-  release:
-    types: [created]
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
+    # Retained as upstream history; no automatic build/upload in this personal P0 project.
+    if: ${{ false }}
     runs-on: ubuntu-latest
 
     steps:
@@ -86,4 +87,3 @@ jobs:
           files: shimmer/build/outputs/apk/release/shimmer-${{ steps.version.outputs.version_name }}.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

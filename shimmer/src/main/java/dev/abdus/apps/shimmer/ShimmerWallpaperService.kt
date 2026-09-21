@@ -290,8 +290,10 @@ class ShimmerWallpaperService : GLWallpaperService() {
                         updateActiveImageSet(newSet, nextUri)
                         cycleScheduler.resetTimer()
                         return@launch
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
                     } catch (e: Exception) {
-                        Log.w(TAG, "Image $nextUri failed to load, marking invalid and retrying", e)
+                        Log.w(TAG, "Image temporarily unavailable; retaining configuration (${e.javaClass.simpleName})")
                         folderRepository.markImageAsInvalid(nextUri)
                         attempts++
                     }
@@ -458,7 +460,6 @@ class ShimmerWallpaperService : GLWallpaperService() {
 
         override fun onSurfaceDestroyed(h: SurfaceHolder) {
             rendererReady = false
-            renderer?.onSurfaceDestroyed()
             super.onSurfaceDestroyed(h)
         }
 

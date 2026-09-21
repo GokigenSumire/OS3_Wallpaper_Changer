@@ -21,7 +21,7 @@ object P0TestImage {
 
     fun decode(context: Context, uri: Uri): ImageSet? {
         val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options); Unit }
             ?: return null
         if (options.outWidth <= 0 || options.outHeight <= 0) return null
         var sample = 1

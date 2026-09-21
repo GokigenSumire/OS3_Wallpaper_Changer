@@ -27,25 +27,25 @@ class Actions {
          * Send a broadcast to request next image.
          */
         fun requestNextImage(context: Context) {
-            context.sendBroadcast(Intent(ACTION_NEXT_IMAGE))
+            context.sendBroadcast(Intent(ACTION_NEXT_IMAGE).setPackage(context.packageName))
         }
 
         /**
          * Send a broadcast to request next duotone preset.
          */
         fun requestNextDuotonePreset(context: Context) {
-            context.sendBroadcast(Intent(ACTION_NEXT_DUOTONE))
+            context.sendBroadcast(Intent(ACTION_NEXT_DUOTONE).setPackage(context.packageName))
         }
 
         /**
          * Send a broadcast to trigger folder refresh/scan.
          */
         fun requestRefreshFolders(context: Context) {
-            context.sendBroadcast(Intent(ACTION_REFRESH_FOLDERS))
+            context.sendBroadcast(Intent(ACTION_REFRESH_FOLDERS).setPackage(context.packageName))
         }
 
         fun requestAddToFavorites(context: Context) {
-            context.sendBroadcast(Intent(ACTION_ADD_TO_FAVORITES))
+            context.sendBroadcast(Intent(ACTION_ADD_TO_FAVORITES).setPackage(context.packageName))
         }
 
         fun broadcastFavoriteAdded(
@@ -53,22 +53,17 @@ class Actions {
             result: FavoriteSaveResult,
         ) {
             val intent = Intent(ACTION_FAVORITE_ADDED).apply {
+                setPackage(context.packageName)
                 putExtra(EXTRA_FAVORITE_URI, result.uri)
                 putExtra(EXTRA_FAVORITE_DISPLAY_NAME, result.displayName)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                clipData = android.content.ClipData.newUri(
-                    context.contentResolver,
-                    result.displayName,
-                    result.uri,
-                )
             }
             context.sendBroadcast(intent)
         }
 
         fun broadcastSetWallpaper(context: Context, uri: Uri) {
             val intent = Intent(ACTION_SET_IMAGE).apply {
+                setPackage(context.packageName)
                 putExtra(EXTRA_IMAGE_URI, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             context.sendBroadcast(intent)
         }
@@ -118,7 +113,7 @@ class Actions {
                 context,
                 shortcutReceiver,
                 filter,
-                androidx.core.content.ContextCompat.RECEIVER_EXPORTED,
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
             )
         }
     }

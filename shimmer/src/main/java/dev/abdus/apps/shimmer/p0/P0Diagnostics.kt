@@ -96,7 +96,7 @@ object P0Diagnostics {
         val pointers = (0 until event.pointerCount).joinToString(";") {
             "${event.getPointerId(it)}:${event.getX(it).toInt()},${event.getY(it).toInt()}"
         }
-        event(scope, "TOUCH", "action=${MotionEvent.actionToString(event.action)} " +
+        this.event(scope, "TOUCH", "action=${MotionEvent.actionToString(event.action)} " +
             "eventTime=${event.eventTime} downTime=${event.downTime} pointers=$pointers history=${event.historySize}")
     }
 
@@ -115,7 +115,7 @@ object P0Diagnostics {
     }
 
     @Synchronized fun export(): String = summary() + "\n" + lines.joinToString("\n")
-    @Synchronized fun tail(): String = lines.takeLast(18).joinToString("\n")
+    @Synchronized fun tail(): String = lines.toList().takeLast(18).joinToString("\n")
 }
 
 /** In-process control only. No exported broadcasts or image URI extras. Main thread only. */

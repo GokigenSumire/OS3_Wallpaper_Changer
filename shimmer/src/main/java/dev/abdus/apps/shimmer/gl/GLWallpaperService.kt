@@ -301,8 +301,8 @@ private class GLThread(
     )
 
     override fun run() {
-        emit("gl_thread_start")
         try {
+            emit("gl_thread_start")
             while (true) {
                 val work = awaitWork() ?: break
                 if (work.idle) {
@@ -345,12 +345,17 @@ private class GLThread(
             try {
                 disposeContext(lost = false, reason = "engine_exit")
             } finally {
-                egl.finish()
-                synchronized(monitor) {
-                    exited = true
-                    acknowledgedDestroy = destroySerial
-                    events.clear()
-                    monitor.notifyAll()
+                try {
+                    egl.finish()
+                } finally {
+                    // Always release Surface-destruction waiters, even if EGL cleanup or
+                    // a diagnostic callback unexpectedly throws during thread shutdown.
+                    synchronized(monitor) {
+                        exited = true
+                        acknowledgedDestroy = destroySerial
+                        events.clear()
+                        monitor.notifyAll()
+                    }
                 }
                 emit("gl_thread_exit")
             }
