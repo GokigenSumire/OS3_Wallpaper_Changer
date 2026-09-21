@@ -1,8 +1,9 @@
 package dev.abdus.apps.shimmer
 
+import android.opengl.EGL14
+import android.opengl.EGLContext
 import android.opengl.GLES30
 import android.os.SystemClock
-import android.util.Log
 import dev.abdus.apps.shimmer.gl.GLWallpaperService
 import dev.abdus.apps.shimmer.gl.ShimmerProgram
 import java.util.concurrent.atomic.AtomicReference
@@ -39,36 +40,48 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
     private var surfaceCreated = false
     private var surfaceDimensions = SurfaceDimensions(0, 0)
 
-    private lateinit var program: ShimmerProgram
+    private var program: ShimmerProgram? = null
+    private var ownerContext: EGLContext? = null
+    private var ownerThread: Thread? = null
 
     override fun onSurfaceCreated() {
-        surfaceCreated = true
+        val context = EGL14.eglGetCurrentContext()
+        check(context != EGL14.EGL_NO_CONTEXT) { "Renderer creation requires a current context" }
+        if (surfaceCreated && ownerContext == context) {
+            requireOwnerContext()
+            return
+        }
+        // GLSurfaceView can recreate a context without a destruction callback. Old names
+        // must be forgotten, never deleted in this new context where names may be reused.
+        onContextLost()
+        ownerContext = context
+        ownerThread = Thread.currentThread()
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glClearColor(0f, 0f, 0f, 1f)
 
-        try {
-            if (::program.isInitialized) {
-                program.release()
-            }
-            program = ShimmerProgram()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize shaders", e)
-            return
-        }
+        // Let the owning thread report and clean up partial initialization failures.
+        program = ShimmerProgram()
+        surfaceCreated = true
 
         // Restore current image texture if it was already set
-        animationController.currentRenderState.let { state ->
+        animationController.targetRenderState.let { state ->
             if (!state.imageSet.original.isRecycled) {
                 currentImage.load(state.imageSet)
+                viewportManager.setCurrentImageAspectRatio(state.imageSet.aspectRatio)
             }
         }
+        // A new context has no previous texture. Restore the current image fully visible.
+        viewportManager.setImageTransitionState(null)
+        animationController.imageTransitionAnimator.reset()
+        animationController.imageTransitionAnimator.currentValue = 1f
 
         pendingImageSet?.let { setImage(it); pendingImageSet = null }
         callbacks.onRendererReady()
     }
 
     override fun onSurfaceChanged(width: Int, height: Int) {
+        requireOwnerContext()
         GLES30.glViewport(0, 0, width, height)
         surfaceDimensions = SurfaceDimensions(width, height)
         viewportManager.setSurfaceDimensions(surfaceDimensions)
@@ -77,6 +90,8 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
 
     override fun onDrawFrame() {
         if (!surfaceCreated) return
+        requireOwnerContext()
+        val activeProgram = checkNotNull(program)
 
         pendingParallaxOffset.getAndSet(null)?.let { newParallax ->
             viewportManager.setParallaxTarget(newParallax)
@@ -114,14 +129,14 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
 
         if (imageAlpha < 1f && prevMvp != null) {
             previousImage.draw(
-                program.handles, prevMvp, blurPercent, 1f,
+                activeProgram.handles, prevMvp, blurPercent, 1f,
                 effectiveDuotone, state.dimAmount * blurPercent, state.grain, grainCounts,
                 touchPointsArray, touchIntensitiesArray, aspectRatio, timeSeconds,
             )
         }
 
         currentImage.draw(
-            program.handles, mvp, blurPercent, imageAlpha,
+            activeProgram.handles, mvp, blurPercent, imageAlpha,
             effectiveDuotone, state.dimAmount * blurPercent, state.grain, grainCounts,
             touchPointsArray, touchIntensitiesArray, aspectRatio, timeSeconds,
         )
@@ -154,6 +169,7 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
             pendingImageSet = imageSet
             return
         }
+        requireOwnerContext()
 
         val previousAspect = currentImage.aspectRatio
 
@@ -244,10 +260,31 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
     }
 
     override fun onSurfaceDestroyed() {
-        if (::program.isInitialized) program.release()
+        if (ownerContext == null) return
+        requireOwnerContext()
+        program?.release()
+        program = null
         previousImage.release()
         currentImage.release()
+        onContextLost()
+    }
+
+    override fun onContextLost() {
+        // CPU-only: the driver reclaims the previous context's GL objects.
+        program = null
+        previousImage = ImageRenderer()
+        currentImage = ImageRenderer()
         surfaceCreated = false
+        ownerContext = null
+        ownerThread = null
+    }
+
+    override fun resourceSummary(): String =
+        "programs=${if (program != null) 1 else 0} textures=${currentImage.textureCount + previousImage.textureCount}"
+
+    private fun requireOwnerContext() {
+        check(Thread.currentThread() === ownerThread && ownerContext != null &&
+            EGL14.eglGetCurrentContext() == ownerContext) { "GL access outside owning thread/context" }
     }
 
     fun isBlurred() = animationController.currentRenderState.blurPercent > 0.01f

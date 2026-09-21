@@ -2,14 +2,12 @@ package dev.abdus.apps.shimmer
 
 import android.content.ContentUris
 import android.content.Context
+import android.database.Cursor
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.MediaStore
-import android.util.Log
 import java.io.File
-
-private const val TAG = "FolderScanner"
 
 data class ScannedImage(
     val uri: Uri,
@@ -18,22 +16,36 @@ data class ScannedImage(
     val fileSize: Long?
 )
 
+private fun Cursor.requireCompleteDocumentsResult() {
+    if (extras.getBoolean(DocumentsContract.EXTRA_LOADING, false)) {
+        throw ScanException(ScanFailure.INCOMPLETE_RESULT)
+    }
+    if (extras.getString(DocumentsContract.EXTRA_ERROR) != null) {
+        throw ScanException(ScanFailure.READ)
+    }
+}
+
 interface ImageScanner {
-    fun scan(uri: Uri, existingFiles: Map<Uri, Long?>? = null): List<ScannedImage>
+    fun scan(uri: Uri, existingFiles: Map<Uri, Long?>?, checkActive: () -> Unit): List<ScannedImage>
 }
 
 private class FileScanner : ImageScanner {
-    override fun scan(uri: Uri, existingFiles: Map<Uri, Long?>?): List<ScannedImage> {
-        val dir = File(uri.path ?: return emptyList())
-        if (!dir.exists() || !dir.isDirectory) return emptyList()
-        return dir.listFiles()
-            ?.filter { it.isFile && it.name.isImageFile() }
-            ?.mapNotNull { file ->
+    override fun scan(uri: Uri, existingFiles: Map<Uri, Long?>?, checkActive: () -> Unit): List<ScannedImage> {
+        val dir = File(uri.path ?: throw ScanException(ScanFailure.READ))
+        if (!dir.isDirectory || !dir.canRead()) throw ScanException(ScanFailure.READ)
+        val files = dir.listFiles() ?: throw ScanException(ScanFailure.NULL_RESULT)
+        return files
+            .filter {
+                checkActive()
+                it.isFile && it.name.isImageFile()
+            }
+            .map { file ->
+                checkActive()
                 val fileUri = Uri.fromFile(file)
                 val fileSize = file.length().takeIf { it > 0 }
                 
                 // Check if file is already indexed (URI + size match)
-                val isExisting = existingFiles?.get(fileUri) == fileSize
+                val isExisting = existingFiles?.containsKey(fileUri) == true && existingFiles[fileUri] == fileSize
                 
                 // If existing and size matches, skip bitmap decoding (just verify file exists)
                 if (isExisting && file.exists()) {
@@ -42,6 +54,9 @@ private class FileScanner : ImageScanner {
                     // New or changed file - decode bitmap
                     val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeFile(file.absolutePath, options)
+                    if (options.outWidth <= 0 || options.outHeight <= 0) {
+                        throw ScanException(ScanFailure.METADATA_DECODE)
+                    }
                     ScannedImage(
                         fileUri,
                         options.outWidth.takeIf { it > 0 },
@@ -50,18 +65,12 @@ private class FileScanner : ImageScanner {
                     )
                 }
             }
-            ?: emptyList()
     }
 }
 
 private class DocumentScanner(private val context: Context) : ImageScanner {
-    override fun scan(uri: Uri, existingFiles: Map<Uri, Long?>?): List<ScannedImage> {
-        val treeId = try {
-            DocumentsContract.getTreeDocumentId(uri)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to get tree document ID for $uri", e)
-            return emptyList()
-        }
+    override fun scan(uri: Uri, existingFiles: Map<Uri, Long?>?, checkActive: () -> Unit): List<ScannedImage> {
+        val treeId = DocumentsContract.getTreeDocumentId(uri)
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(uri, treeId)
 
         val projection = arrayOf(
@@ -73,58 +82,59 @@ private class DocumentScanner(private val context: Context) : ImageScanner {
 
         val results = mutableListOf<ScannedImage>()
 
-        try {
-            context.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
-                val idIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
-                val mimeIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
-                val sizeIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
-                val nameIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+        val cursorResult = context.contentResolver.query(childrenUri, projection, null, null, null)
+            ?: throw ScanException(ScanFailure.NULL_RESULT)
+        cursorResult.use { cursor ->
+            // Some document providers return a partial list while loading from remote storage.
+            cursor.requireCompleteDocumentsResult()
+            val idIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val mimeIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            val sizeIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_SIZE)
+            val nameIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
 
-                while (cursor.moveToNext()) {
-                    val mimeType = cursor.getString(mimeIdx)
-                    val name = cursor.getString(nameIdx) ?: ""
+            while (cursor.moveToNext()) {
+                checkActive()
+                val mimeType = cursor.getString(mimeIdx)
+                val name = cursor.getString(nameIdx) ?: ""
 
-                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) continue
+                if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) continue
 
-                    if (mimeType?.startsWith("image/") == true || name.isImageFile()) {
-                        val docId = cursor.getString(idIdx)
-                        val fileUri = DocumentsContract.buildDocumentUriUsingTree(uri, docId)
-                        val fileSize = cursor.getLong(sizeIdx).takeIf { it > 0 }
+                if (mimeType?.startsWith("image/") == true || name.isImageFile()) {
+                    val docId = cursor.getString(idIdx)
+                    val fileUri = DocumentsContract.buildDocumentUriUsingTree(uri, docId)
+                    val fileSize = cursor.getLong(sizeIdx).takeIf { it > 0 }
 
-                        // Check if file is already indexed (URI + size match)
-                        val isExisting = existingFiles?.get(fileUri) == fileSize
+                    val isExisting = existingFiles?.containsKey(fileUri) == true && existingFiles[fileUri] == fileSize
 
-                        if (isExisting) {
-                            results.add(ScannedImage(fileUri, null, null, fileSize))
-                        } else {
-                            // New or changed file - decode bitmap
-                            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                            try {
-                                context.contentResolver.openInputStream(fileUri)?.use {
-                                    BitmapFactory.decodeStream(it, null, options)
-                                }
-                                results.add(ScannedImage(
-                                    fileUri,
-                                    options.outWidth.takeIf { it > 0 },
-                                    options.outHeight.takeIf { it > 0 },
-                                    fileSize
-                                ))
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Failed to decode bounds for $fileUri", e)
-                            }
+                    if (isExisting) {
+                        results.add(ScannedImage(fileUri, null, null, fileSize))
+                    } else {
+                        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        val stream = context.contentResolver.openInputStream(fileUri)
+                            ?: throw ScanException(ScanFailure.METADATA_DECODE)
+                        stream.use {
+                            BitmapFactory.decodeStream(it, null, options)
                         }
+                        if (options.outWidth <= 0 || options.outHeight <= 0) {
+                            throw ScanException(ScanFailure.METADATA_DECODE)
+                        }
+                        results.add(ScannedImage(
+                            fileUri,
+                            options.outWidth,
+                            options.outHeight,
+                            fileSize
+                        ))
                     }
                 }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to query children for $uri", e)
+            cursor.requireCompleteDocumentsResult()
         }
         return results
     }
 }
 
 private class MediaStoreScanner(private val context: Context) : ImageScanner {
-    override fun scan(uri: Uri, existingFiles: Map<Uri, Long?>?): List<ScannedImage> {
+    override fun scan(uri: Uri, existingFiles: Map<Uri, Long?>?, checkActive: () -> Unit): List<ScannedImage> {
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
             MediaStore.Images.Media.WIDTH,
@@ -147,27 +157,17 @@ private class MediaStoreScanner(private val context: Context) : ImageScanner {
             val sizeIdx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
             buildList {
                 while (cursor.moveToNext()) {
+                    checkActive()
                     val id = cursor.getLong(idIdx)
                     val fileUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
                     val size = cursor.getLong(sizeIdx).takeIf { it > 0 }
                     
-                    // Check if file is already indexed (URI + size match)
-                    val isExisting = existingFiles?.get(fileUri) == size
-                    
-                    // If existing and size matches, skip width/height lookup (MediaStore already has them)
-                    if (isExisting) {
-                        val width = cursor.getInt(widthIdx).takeIf { it > 0 }
-                        val height = cursor.getInt(heightIdx).takeIf { it > 0 }
-                        add(ScannedImage(fileUri, width, height, size))
-                    } else {
-                        // New or changed file - include dimensions
-                        val width = cursor.getInt(widthIdx).takeIf { it > 0 }
-                        val height = cursor.getInt(heightIdx).takeIf { it > 0 }
-                        add(ScannedImage(fileUri, width, height, size))
-                    }
+                    val width = cursor.getInt(widthIdx).takeIf { it > 0 }
+                    val height = cursor.getInt(heightIdx).takeIf { it > 0 }
+                    add(ScannedImage(fileUri, width, height, size))
                 }
             }
-        } ?: emptyList()
+        } ?: throw ScanException(ScanFailure.NULL_RESULT)
     }
 }
 
@@ -176,17 +176,18 @@ class FolderScanner(context: Context) {
     private val documentScanner = DocumentScanner(context)
     private val mediaStoreScanner = MediaStoreScanner(context)
 
-    fun scan(uri: Uri, existingFiles: Map<Uri, Long?>? = null): List<ScannedImage> {
-        return runCatching {
+    fun scan(
+        uri: Uri,
+        existingFiles: Map<Uri, Long?>? = null,
+        checkActive: () -> Unit = {},
+    ): ScanResult<ScannedImage> {
+        return captureScan(checkActive) {
             val scanner = when {
                 FavoritesFolderResolver.isDefaultFavoritesUri(uri) -> mediaStoreScanner
                 uri.scheme == "file" -> fileScanner
                 else -> documentScanner
             }
-            scanner.scan(uri, existingFiles)
-        }.getOrElse {
-            Log.e(TAG, "Failed to scan $uri", it)
-            emptyList()
+            scanner.scan(uri, existingFiles, checkActive)
         }
     }
 }

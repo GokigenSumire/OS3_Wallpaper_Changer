@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Shimmer</string>
-    <string name="wallpaper_description">Display your photos with smooth GPU effects and parallax scrolling</string>
+    <string name="app_name">OS3 Wallpaper P0</string>
+    <string name="wallpaper_description">P0 手势、编辑入口与生命周期诊断壁纸</string>
     <string name="shortcut_next_image_short_label">Next Image</string>
     <string name="shortcut_next_image_long_label">Show the next wallpaper image</string>
     <string name="shortcut_random_duotone_short_label">Random Duotone</string>

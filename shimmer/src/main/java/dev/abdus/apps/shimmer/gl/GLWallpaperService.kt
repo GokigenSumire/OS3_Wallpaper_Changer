@@ -5,63 +5,55 @@ import android.opengl.EGLConfig
 import android.opengl.EGLContext
 import android.opengl.EGLDisplay
 import android.opengl.EGLSurface
+import android.opengl.GLES30
 import android.service.wallpaper.WallpaperService
-import android.util.Log
 import android.view.SurfaceHolder
-import java.util.concurrent.ArrayBlockingQueue
+import java.util.ArrayDeque
 
 /**
- * Modern OpenGL ES wallpaper service using EGL14 APIs with VSync support.
- * Optimized for Android 8.0+ (API 26+) with GLES 3.0.
+ * One render thread and unshared EGL context per Engine. All renderer callbacks,
+ * including resource disposal, belong to that thread. A window Surface is not a context.
  */
 open class GLWallpaperService : WallpaperService() {
     companion object {
-        private const val TAG = "GLWallpaperService"
         const val RENDERMODE_WHEN_DIRTY = 0
         const val RENDERMODE_CONTINUOUSLY = 1
     }
 
-    override fun onCreateEngine(): Engine {
-        return GLEngine()
-    }
+    override fun onCreateEngine(): Engine = GLEngine()
 
-    /**
-     * Renderer interface for modern GLES 3.0 rendering.
-     */
     interface Renderer {
+        /** Called exactly once for each newly created, current context. */
         fun onSurfaceCreated()
         fun onSurfaceChanged(width: Int, height: Int)
         fun onDrawFrame()
+        /** Release GL objects; only called on the render thread with their context current. */
         fun onSurfaceDestroyed() {}
-    }
-
-    enum class EglStatus {
-        OK,
-        CONTEXT_LOST,
-        ERROR
+        /** Forget stale object names only. MUST NOT call GL, including glDelete*. */
+        fun onContextLost() {}
+        /** Numeric resource counts only; called on the render thread at lifecycle boundaries. */
+        fun resourceSummary(): String = ""
     }
 
     open inner class GLEngine : Engine() {
         private var glThread: GLThread? = null
-        private var renderer: Renderer? = null
-        private var eglContextClientVersion = 3 // Default to GLES 3.0
+        private var eglContextClientVersion = 3
+
+        /** Implementations must be thread safe and bound/sanitize stored diagnostics. */
+        protected open fun diagnosticEvent(event: String, details: String) {}
 
         override fun onVisibilityChanged(visible: Boolean) {
-            if (visible) {
-                glThread?.onResume()
-            } else {
-                glThread?.onPause()
-            }
+            glThread?.setVisible(visible)
             super.onVisibilityChanged(visible)
         }
 
         override fun onDestroy() {
-            super.onDestroy()
             glThread?.requestExitAndWait()
+            super.onDestroy()
         }
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-            glThread?.onWindowResize(width, height)
+            glThread?.resize(width, height)
             super.onSurfaceChanged(holder, format, width, height)
         }
 
@@ -71,551 +63,496 @@ open class GLWallpaperService : WallpaperService() {
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
-            glThread?.surfaceDestroyed()
+            // Wait until this thread has stopped using the Android Surface. No GL on main.
+            glThread?.surfaceDestroyedAndWait()
             super.onSurfaceDestroyed(holder)
         }
 
         fun setRenderer(renderer: Renderer) {
-            checkRenderThreadState()
-            this.renderer = renderer
-            glThread = GLThread(this@GLWallpaperService, renderer, eglContextClientVersion)
-            glThread?.start()
+            check(glThread == null) { "Renderer already set" }
+            glThread = GLThread(renderer, eglContextClientVersion, ::diagnosticEvent).also {
+                it.setVisible(isVisible)
+                it.start()
+            }
         }
 
         fun setEGLContextClientVersion(version: Int) {
-            checkRenderThreadState()
-            require(version == 2 || version == 3) { "Only GLES 2.0 and 3.0 are supported" }
+            check(glThread == null) { "Renderer already set" }
+            require(version == 2 || version == 3)
             eglContextClientVersion = version
         }
 
         fun setRenderMode(renderMode: Int) {
+            require(renderMode == RENDERMODE_WHEN_DIRTY || renderMode == RENDERMODE_CONTINUOUSLY)
             glThread?.setRenderMode(renderMode)
         }
 
-        open fun requestRender() {
-            glThread?.requestRender()
-        }
+        open fun requestRender() { glThread?.requestRender() }
 
-        fun queueEvent(runnable: Runnable) {
-            glThread?.queueEvent(runnable)
-        }
+        /** False means no thread/closed/full queue; callers must not treat rejection as applied. */
+        fun queueEvent(runnable: Runnable): Boolean = glThread?.queueEvent(runnable) ?: false
 
-        private fun checkRenderThreadState() {
-            if (glThread != null) {
-                throw IllegalStateException("setRenderer has already been called for this instance.")
+        /** Local diagnostic experiment. Requests coalesce and wait for visibility + valid Surface. */
+        fun requestP0Rebuild(contextToo: Boolean) { glThread?.requestRebuild(contextToo) }
+    }
+}
+
+/** EGL displays are shared even though contexts are not; terminate only after the last Engine. */
+private object EglDisplayPool {
+    private var display: EGLDisplay? = null
+    private var users = 0
+
+    @Synchronized fun acquire(): EGLDisplay {
+        if (users == 0) {
+            val candidate = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+            if (candidate == EGL14.EGL_NO_DISPLAY) throw EglFailure("get_display", EGL14.eglGetError())
+            val version = IntArray(2)
+            if (!EGL14.eglInitialize(candidate, version, 0, version, 1)) {
+                throw EglFailure("initialize", EGL14.eglGetError())
             }
+            display = candidate
+        }
+        users++
+        return checkNotNull(display)
+    }
+
+    @Synchronized fun release() {
+        if (users == 0) return
+        users--
+        if (users == 0) {
+            EGL14.eglTerminate(display)
+            display = null
         }
     }
 }
 
-/**
- * EGL helper class using modern EGL14 APIs with VSync support.
- */
-private class EglHelper(private val eglContextClientVersion: Int) {
-    private var eglDisplay: EGLDisplay? = null
-    private var eglConfig: EGLConfig? = null
-    private var eglContext: EGLContext? = null
-    private var eglSurface: EGLSurface? = null
+private class EglFailure(val operation: String, val code: Int) : RuntimeException(operation)
 
-    fun start() {
-        if (eglContext != null) return // Already have a context, don't recreate!
-        val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-        if (display == EGL14.EGL_NO_DISPLAY) {
-            throw RuntimeException("eglGetDisplay failed")
-        }
+/** Accessed exclusively on its owning GLThread. */
+private class EglHelper(
+    private val clientVersion: Int,
+    private val error: (String, Int) -> Unit,
+) {
+    private var display: EGLDisplay? = null
+    private var config: EGLConfig? = null
+    private var context: EGLContext? = null
+    private var window: EGLSurface? = null
+    val hasContext: Boolean get() = context != null
+    val hasSurface: Boolean get() = window != null
+    val isCurrent: Boolean get() = context != null && EGL14.eglGetCurrentContext() == context
+    val currentId: String get() = EGL14.eglGetCurrentContext().nativeHandle.toString(16)
+    val contextId: String get() = context?.nativeHandle?.toString(16) ?: "0"
 
-        val version = IntArray(2)
-        if (!EGL14.eglInitialize(display, version, 0, version, 1)) {
-            throw RuntimeException("eglInitialize failed")
-        }
-
-        eglDisplay = display
-
-        // Modern EGL config optimized for Android 8.0+
-        // Using RGB instead of RGBA - wallpapers are opaque, saves GPU memory
-        val configAttribs = intArrayOf(
-            EGL14.EGL_RED_SIZE, 8,
-            EGL14.EGL_GREEN_SIZE, 8,
-            EGL14.EGL_BLUE_SIZE, 8,
-            EGL14.EGL_DEPTH_SIZE, 0,
-            EGL14.EGL_STENCIL_SIZE, 0,
-            EGL14.EGL_RENDERABLE_TYPE, if (eglContextClientVersion == 3) 64 else 4,
-            EGL14.EGL_NONE,
-        )
-
+    fun createContext() {
+        check(context == null)
+        if (display == null) display = EglDisplayPool.acquire()
         val configs = arrayOfNulls<EGLConfig>(1)
-        val numConfigs = IntArray(1)
-        if (!EGL14.eglChooseConfig(display, configAttribs, 0, configs, 0, 1, numConfigs, 0)) {
-            throw RuntimeException("eglChooseConfig failed")
-        }
-
-        if (numConfigs[0] == 0) {
-            throw RuntimeException("No EGL config found")
-        }
-
-        eglConfig = configs[0]
-
-        val contextAttribs = intArrayOf(
-            EGL14.EGL_CONTEXT_CLIENT_VERSION, eglContextClientVersion,
+        val count = IntArray(1)
+        val attributes = intArrayOf(
+            EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8,
+            EGL14.EGL_DEPTH_SIZE, 0, EGL14.EGL_STENCIL_SIZE, 0,
+            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_WINDOW_BIT or EGL14.EGL_PBUFFER_BIT,
+            EGL14.EGL_RENDERABLE_TYPE, if (clientVersion == 3) 64 else 4,
             EGL14.EGL_NONE,
         )
-
-        val context = EGL14.eglCreateContext(
-            display,
-            eglConfig!!,
-            EGL14.EGL_NO_CONTEXT,
-            contextAttribs,
-            0,
+        checked(EGL14.eglChooseConfig(display, attributes, 0, configs, 0, 1, count, 0), "choose_config")
+        if (count[0] == 0) throw EglFailure("no_config", EGL14.EGL_BAD_CONFIG)
+        config = configs[0]
+        val created = EGL14.eglCreateContext(
+            display, config, EGL14.EGL_NO_CONTEXT,
+            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, clientVersion, EGL14.EGL_NONE), 0,
         )
-
-        if (context == EGL14.EGL_NO_CONTEXT) {
-            throw RuntimeException("eglCreateContext failed")
+        if (created == null || created == EGL14.EGL_NO_CONTEXT) {
+            throw EglFailure("create_context", EGL14.eglGetError())
         }
-
-        eglContext = context
+        context = created
     }
 
-    fun createSurface(holder: SurfaceHolder): Boolean {
-        if (eglSurface != null && eglSurface != EGL14.EGL_NO_SURFACE) {
-            EGL14.eglMakeCurrent(
-                eglDisplay,
-                EGL14.EGL_NO_SURFACE,
-                EGL14.EGL_NO_SURFACE,
-                EGL14.EGL_NO_CONTEXT,
-            )
-            destroySurface()
-        }
-
-        val surface = EGL14.eglCreateWindowSurface(
-            eglDisplay,
-            eglConfig,
-            holder.surface,
-            intArrayOf(EGL14.EGL_NONE),
-            0,
+    fun createWindow(holder: SurfaceHolder, onCreated: () -> Unit) {
+        check(context != null && window == null)
+        val created = EGL14.eglCreateWindowSurface(
+            display, config, holder.surface, intArrayOf(EGL14.EGL_NONE), 0,
         )
-
-        if (surface == null || surface == EGL14.EGL_NO_SURFACE) {
-            val error = EGL14.eglGetError()
-            Log.e("EglHelper", "createWindowSurface failed: $error")
-            return false
+        if (created == null || created == EGL14.EGL_NO_SURFACE) {
+            throw EglFailure("create_window", EGL14.eglGetError())
         }
-
-        eglSurface = surface
-
-        if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-            val error = EGL14.eglGetError()
-            Log.e("EglHelper", "eglMakeCurrent failed: $error")
-            return false
-        }
-
-        // Enable VSync by setting swap interval to 1
-        // This synchronizes buffer swaps with the display's refresh rate
-        if (!EGL14.eglSwapInterval(eglDisplay, 1)) {
-            Log.w("EglHelper", "eglSwapInterval(1) failed, VSync may not be enabled")
-        }
-
-        return true
+        window = created
+        onCreated()
+        checked(EGL14.eglMakeCurrent(display, window, window, context), "make_current")
+        checked(EGL14.eglSwapInterval(display, 1), "swap_interval")
     }
 
-    fun swap(): GLWallpaperService.EglStatus {
-        val surface = eglSurface ?: return GLWallpaperService.EglStatus.ERROR
-        if (surface == EGL14.EGL_NO_SURFACE) return GLWallpaperService.EglStatus.ERROR
+    fun swap() { checked(EGL14.eglSwapBuffers(display, window), "swap_buffers") }
 
-        // With eglSwapInterval(1), this will block until VSync
-        if (!EGL14.eglSwapBuffers(eglDisplay, surface)) {
-            val error = EGL14.eglGetError()
-            return if (error == EGL14.EGL_CONTEXT_LOST) {
-                GLWallpaperService.EglStatus.CONTEXT_LOST
-            } else {
-                GLWallpaperService.EglStatus.ERROR
+    /**
+     * A tiny pbuffer permits correct glDelete when Engine exits after its window was destroyed.
+     * If binding fails, caller abandons names; destroying the context reclaims its objects.
+     */
+    fun releaseWithCurrent(block: () -> Unit): Boolean {
+        if (!hasContext) return false
+        if (isCurrent) {
+            block()
+            return true
+        }
+        val scratch = EGL14.eglCreatePbufferSurface(
+            display, config, intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0,
+        )
+        if (scratch == null || scratch == EGL14.EGL_NO_SURFACE) {
+            error("cleanup_pbuffer", EGL14.eglGetError())
+            return false
+        }
+        try {
+            if (!EGL14.eglMakeCurrent(display, scratch, scratch, context)) {
+                error("cleanup_make_current", EGL14.eglGetError())
+                return false
             }
+            block()
+            return true
+        } finally {
+            report(EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT), "cleanup_unbind")
+            report(EGL14.eglDestroySurface(display, scratch), "cleanup_destroy_pbuffer")
         }
-        return GLWallpaperService.EglStatus.OK
     }
 
-    fun destroySurface() {
-        if (eglSurface != null && eglSurface != EGL14.EGL_NO_SURFACE) {
-            EGL14.eglMakeCurrent(
-                eglDisplay,
-                EGL14.EGL_NO_SURFACE,
-                EGL14.EGL_NO_SURFACE,
-                EGL14.EGL_NO_CONTEXT,
-            )
-            EGL14.eglDestroySurface(eglDisplay, eglSurface)
-            eglSurface = null
-        }
+    fun destroyWindow() {
+        val old = window ?: return
+        report(EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT), "unbind")
+        report(EGL14.eglDestroySurface(display, old), "destroy_window")
+        window = null
+    }
+
+    fun destroyContext() {
+        destroyWindow()
+        val old = context ?: return
+        report(EGL14.eglMakeCurrent(display, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT), "context_unbind")
+        report(EGL14.eglDestroyContext(display, old), "destroy_context")
+        context = null
     }
 
     fun finish() {
-        destroySurface()
-
-        if (eglContext != null) {
-            EGL14.eglDestroyContext(eglDisplay, eglContext)
-            eglContext = null
-        }
-        if (eglDisplay != null) {
-            EGL14.eglTerminate(eglDisplay)
-            eglDisplay = null
-        }
+        destroyContext()
+        if (display != null) EglDisplayPool.release()
+        display = null
+        config = null
     }
 
-    fun finishContext() {
-        destroySurface()
-        if (eglContext != null) {
-            EGL14.eglDestroyContext(eglDisplay, eglContext)
-            eglContext = null
-        }
+    private fun checked(ok: Boolean, operation: String) {
+        if (!ok) throw EglFailure(operation, EGL14.eglGetError())
+    }
+    private fun report(ok: Boolean, operation: String) {
+        if (!ok) error(operation, EGL14.eglGetError())
     }
 }
 
-/**
- * GL rendering thread using modern EGL14 APIs with VSync.
- */
 private class GLThread(
-    private val context: android.content.Context,
     private val renderer: GLWallpaperService.Renderer,
-    private val eglContextClientVersion: Int,
+    clientVersion: Int,
+    private val diagnostic: (String, String) -> Unit,
 ) : Thread() {
-    companion object {
-        private const val TAG = "GLThread"
-    }
-
-    private var targetFps = 60
-    private var targetFrameNanos = 1_000_000_000L / targetFps
-
-    private val threadManager = GLThreadManager()
+    private val monitor = Object()
+    private var done = false
+    private var exited = false
+    private var visible = false
     private var holder: SurfaceHolder? = null
     private var width = 0
     private var height = 0
     private var sizeChanged = true
+    private var renderRequested = true
+    private var renderMode = GLWallpaperService.RENDERMODE_WHEN_DIRTY
+    private var idleRequested = false
+    private var destroySerial = 0L
+    private var acknowledgedDestroy = 0L
+    private var rebuildSurface = false
+    private var rebuildContext = false
+    private var blocked = false
+    private val events = ArrayDeque<Runnable>()
 
-    @Volatile
-    private var done = false
-
-    @Volatile
-    private var paused = false
-
-    @Volatile
-    private var hasSurface = false
-
-    @Volatile
-    private var waitingForSurface = false
-
-    @Volatile
-    private var haveEgl = false
-
-    private var renderMode = GLWallpaperService.RENDERMODE_CONTINUOUSLY
-    private var requestRender = true
-
-    private val eventQueue = ArrayBlockingQueue<Runnable>(10)
-    private var eventsWaiting = false
-
-    private var eglHelper: EglHelper? = null
-
-    // Performance monitoring
-    private var frameStartNanos = 0L
-    private var droppedFrames = 0
-
-    init {
-        name = "GLThread $id"
-        updateRefreshRate()
+    // These fields and every EGL/renderer access belong solely to this render thread.
+    private var contextGeneration = 0L
+    private var contextDestroys = 0L
+    private var surfaceGeneration = 0L
+    private var surfaceCreates = 0L
+    private var surfaceDestroys = 0L
+    private var resourceCreates = 0L
+    private var resourceReleases = 0L
+    private var resourceLost = 0L
+    private var resourcesLive = false
+    private var errorCount = 0L
+    private var consecutiveContextLosses = 0
+    private val egl = EglHelper(clientVersion) { operation, code ->
+        errorCount++
+        emit("egl_error", "operation=$operation code=$code")
     }
 
-    private fun updateRefreshRate() {
-        val windowManager = context.getSystemService(android.content.Context.WINDOW_SERVICE) as android.view.WindowManager
+    init { name = "WallpaperGL-$id" }
 
-        @Suppress("DEPRECATION")
-        val display = windowManager.defaultDisplay
-        val refreshRate = display?.refreshRate?.toInt() ?: 60
-        targetFps = refreshRate.coerceIn(30, 144)
-        targetFrameNanos = 1_000_000_000L / targetFps
-        Log.d(TAG, "Target refresh rate: $targetFps Hz")
-    }
+    private data class Work(
+        val idle: Boolean = false,
+        val destroySerial: Long = 0,
+        val holder: SurfaceHolder? = null,
+        val width: Int = 0,
+        val height: Int = 0,
+        val resized: Boolean = false,
+        val rebuildSurface: Boolean = false,
+        val rebuildContext: Boolean = false,
+    )
 
     override fun run() {
+        emit("gl_thread_start")
         try {
-            guardedRun()
-        } catch (e: InterruptedException) {
-            // Thread interrupted, exit gracefully
-        } finally {
-            threadManager.threadExiting(this)
-        }
-    }
-
-    @Throws(InterruptedException::class)
-    private fun guardedRun() {
-        eglHelper = EglHelper(eglContextClientVersion)
-
-        try {
-            var tellRendererSurfaceCreated = true
-            var tellRendererSurfaceChanged = true
-
-            while (!isDone()) {
-                var w = 0
-                var h = 0
-                var changed = false
-                var needStart = false
-                var eventsWaiting = false
-
-                synchronized(threadManager) {
-                    while (true) {
-                        if (paused) {
-                            stopEglLocked()
-                        }
-
-                        if (!hasSurface) {
-                            if (!waitingForSurface) {
-                                stopEglLocked()
-                                waitingForSurface = true
-                                (threadManager as Object).notifyAll()
-                            }
-                        } else {
-                            if (!haveEgl) {
-                                if (threadManager.tryAcquireEglSurface(this)) {
-                                    haveEgl = true
-                                    eglHelper!!.start()
-                                    requestRender = true
-                                    needStart = true
-                                }
-                            }
-                        }
-
-                        if (done) return
-
-                        if (this.eventsWaiting) {
-                            eventsWaiting = true
-                            this.eventsWaiting = false
-                            break
-                        }
-
-                        if (!paused && hasSurface && haveEgl && width > 0 && height > 0 &&
-                            (requestRender || renderMode == GLWallpaperService.RENDERMODE_CONTINUOUSLY)
-                        ) {
-                            changed = sizeChanged
-                            w = width
-                            h = height
-                            sizeChanged = false
-                            requestRender = false
-                            if (hasSurface && waitingForSurface) {
-                                changed = true
-                                waitingForSurface = false
-                                (threadManager as Object).notifyAll()
-                            }
-                            break
-                        }
-
-                        (threadManager as Object).wait()
-                    }
-                }
-
-                if (eventsWaiting) {
-                    var runnable: Runnable?
-                    if (haveEgl) {
-                        while (getEvent().also { runnable = it } != null) {
-                            runnable!!.run()
-                            if (isDone()) return
-                        }
-                    } else {
-                        this.eventsWaiting = true
+            while (true) {
+                val work = awaitWork() ?: break
+                if (work.idle) {
+                    dropSurface("invisible_or_surface_destroyed")
+                    synchronized(monitor) {
+                        acknowledgedDestroy = maxOf(acknowledgedDestroy, work.destroySerial)
+                        monitor.notifyAll()
                     }
                     continue
                 }
-
-                if (needStart) {
-                    tellRendererSurfaceCreated = true
-                    changed = true
-                }
-
-                if (changed) {
-                    if (!eglHelper!!.createSurface(holder!!)) {
-                        Log.e(TAG, "Failed to create EGL surface")
-                        continue
-                    }
-                    tellRendererSurfaceChanged = true
-                }
-
-                if (tellRendererSurfaceCreated) {
-                    renderer.onSurfaceCreated()
-                    tellRendererSurfaceCreated = false
-                }
-
-                if (tellRendererSurfaceChanged) {
-                    renderer.onSurfaceChanged(w, h)
-                    tellRendererSurfaceChanged = false
-                }
-
-                if (w > 0 && h > 0 && !paused) {
-                    frameStartNanos = System.nanoTime()
-
-                    renderer.onDrawFrame()
-
-                    val status = eglHelper!!.swap()
-                    if (status == GLWallpaperService.EglStatus.CONTEXT_LOST) {
-                        Log.w(TAG, "EGL context lost, resetting context")
-                        renderer.onSurfaceDestroyed()
-                        synchronized(threadManager) {
-                            haveEgl = false
-                            eglHelper!!.finishContext()
-                            threadManager.releaseEglSurface(this)
-                        }
-                        // Continue to next loop iteration which will re-init EGL
-                        continue
-                    }
-
-                    val frameDuration = System.nanoTime() - frameStartNanos
-                    if (frameDuration > targetFrameNanos * 2) {
-                        droppedFrames++
-                        if (droppedFrames % 60 == 0) {
-                            Log.w(TAG, "Dropped frames: $droppedFrames, last frame: ${frameDuration / 1_000_000}ms")
-                        }
-                    }
-                }
-            }
-        } finally {
-            synchronized(threadManager) {
-                stopEglLocked()
-                eglHelper!!.finish()
-            }
-        }
-    }
-
-    private fun stopEglLocked() {
-        if (haveEgl) {
-            haveEgl = false
-            eglHelper!!.destroySurface()
-            threadManager.releaseEglSurface(this)
-        }
-    }
-
-    private fun isDone(): Boolean {
-        synchronized(threadManager) {
-            return done
-        }
-    }
-
-    fun setRenderMode(renderMode: Int) {
-        synchronized(threadManager) {
-            this.renderMode = renderMode
-            if (renderMode == GLWallpaperService.RENDERMODE_CONTINUOUSLY) {
-                (threadManager as Object).notifyAll()
-            }
-        }
-    }
-
-    fun requestRender() {
-        synchronized(threadManager) {
-            requestRender = true
-            (threadManager as Object).notifyAll()
-        }
-    }
-
-    fun surfaceCreated(holder: SurfaceHolder) {
-        this.holder = holder
-        synchronized(threadManager) {
-            hasSurface = true
-            (threadManager as Object).notifyAll()
-        }
-    }
-
-    fun surfaceDestroyed() {
-        synchronized(threadManager) {
-            hasSurface = false
-            (threadManager as Object).notifyAll()
-            while (!waitingForSurface && isAlive && !done) {
                 try {
-                    (threadManager as Object).wait()
-                } catch (e: InterruptedException) {
-                    currentThread().interrupt()
+                    render(work)
+                    consecutiveContextLosses = 0
+                } catch (failure: EglFailure) {
+                    errorCount++
+                    emit("egl_error", "operation=${failure.operation} code=${failure.code}")
+                    if (failure.code == EGL14.EGL_CONTEXT_LOST) {
+                        disposeContext(lost = true, reason = "driver_context_lost")
+                        consecutiveContextLosses++
+                        synchronized(monitor) {
+                            renderRequested = true
+                            blocked = consecutiveContextLosses >= 3
+                        }
+                    } else {
+                        dropSurface("egl_failure")
+                        synchronized(monitor) { blocked = true }
+                    }
+                } catch (failure: RuntimeException) {
+                    // Do not expose exception messages: queued work may originate from private URIs.
+                    errorCount++
+                    emit("renderer_error", "type=${failure.javaClass.simpleName}")
+                    disposeContext(lost = !egl.isCurrent, reason = "renderer_error")
+                    synchronized(monitor) { blocked = true }
                 }
             }
-        }
-    }
-
-    fun onPause() {
-        synchronized(threadManager) {
-            paused = true
-            (threadManager as Object).notifyAll()
-        }
-    }
-
-    fun onResume() {
-        synchronized(threadManager) {
-            paused = false
-            sizeChanged = true
-            requestRender = true
-            (threadManager as Object).notifyAll()
-        }
-    }
-
-    fun onWindowResize(w: Int, h: Int) {
-        synchronized(threadManager) {
-            width = w
-            height = h
-            sizeChanged = true
-            (threadManager as Object).notifyAll()
-        }
-    }
-
-    fun requestExitAndWait() {
-        synchronized(threadManager) {
-            done = true
-            (threadManager as Object).notifyAll()
-        }
-        try {
-            join()
-        } catch (ex: InterruptedException) {
+        } catch (_: InterruptedException) {
+            emit("gl_thread_interrupted")
             currentThread().interrupt()
-        }
-    }
-
-    fun queueEvent(runnable: Runnable) {
-        synchronized(this) {
-            if (eventQueue.offer(runnable)) {
-                synchronized(threadManager) {
-                    eventsWaiting = true
-                    (threadManager as Object).notifyAll()
+        } finally {
+            try {
+                disposeContext(lost = false, reason = "engine_exit")
+            } finally {
+                egl.finish()
+                synchronized(monitor) {
+                    exited = true
+                    acknowledgedDestroy = destroySerial
+                    events.clear()
+                    monitor.notifyAll()
                 }
-            } else {
-                Log.w(TAG, "Event queue full, dropping event")
+                emit("gl_thread_exit")
             }
         }
     }
 
-    private fun getEvent(): Runnable? {
-        synchronized(this) {
-            return eventQueue.poll()
+    private fun awaitWork(): Work? = synchronized(monitor) {
+        while (true) {
+            if (done) return@synchronized null
+            if (idleRequested) {
+                idleRequested = false
+                return@synchronized Work(idle = true, destroySerial = destroySerial)
+            }
+            if (visible && holder != null && width > 0 && height > 0 && !blocked &&
+                (renderRequested || sizeChanged || rebuildSurface || rebuildContext ||
+                    events.isNotEmpty() || renderMode == GLWallpaperService.RENDERMODE_CONTINUOUSLY)
+            ) {
+                val work = Work(
+                    holder = holder, width = width, height = height, resized = sizeChanged,
+                    rebuildSurface = rebuildSurface, rebuildContext = rebuildContext,
+                )
+                sizeChanged = false
+                renderRequested = false
+                rebuildSurface = false
+                rebuildContext = false
+                return@synchronized work
+            }
+            monitor.wait()
+        }
+        @Suppress("UNREACHABLE_CODE")
+        null
+    }
+
+    private fun render(work: Work) {
+        if (work.rebuildContext) {
+            emit("p0_rebuild_begin", "kind=context")
+            disposeContext(lost = false, reason = "p0_controlled_context")
+        } else if (work.rebuildSurface) {
+            emit("p0_rebuild_begin", "kind=surface")
+            dropSurface("p0_controlled_surface")
+        }
+
+        if (!egl.hasContext) {
+            egl.createContext()
+            contextGeneration++
+            emit("egl_context_created")
+        }
+        val newSurface = !egl.hasSurface
+        if (newSurface) {
+            // Creation and current binding are separate observations, including failed binds.
+            egl.createWindow(checkNotNull(work.holder)) {
+                surfaceGeneration++
+                surfaceCreates++
+                emit("egl_surface_created", "width=${work.width} height=${work.height}")
+            }
+            emit("egl_surface_bound")
+        }
+        check(egl.isCurrent) { "Renderer without current owner context" }
+        if (!resourcesLive) {
+            // Mark before invoking so partial initialization still receives cleanup.
+            resourcesLive = true
+            resourceCreates++
+            renderer.onSurfaceCreated()
+            checkGl("resource_create")
+            emit("gl_resources_created", renderer.resourceSummary())
+        }
+        if (work.resized || newSurface) {
+            renderer.onSurfaceChanged(work.width, work.height)
+            checkGl("resize")
+            emit("gl_resized", "width=${work.width} height=${work.height}")
+        }
+        // Commands never run before context binding + initialization + viewport setup.
+        // Keep commands queued if EGL setup fails. Bound the batch so producers cannot
+        // indefinitely prevent Surface destruction; an exception preserves later commands.
+        val eventCount = synchronized(monitor) { events.size }
+        repeat(eventCount) {
+            val event = synchronized(monitor) { events.pollFirst() }
+            event?.run()
+        }
+        check(egl.isCurrent)
+        renderer.onDrawFrame()
+        checkGl("draw")
+        egl.swap()
+        if (newSurface || work.rebuildContext || work.rebuildSurface) {
+            emit("gl_presented", renderer.resourceSummary())
         }
     }
 
-    private inner class GLThreadManager {
-        @Volatile
-        private var eglOwner: GLThread? = null
+    private fun dropSurface(reason: String) {
+        if (!egl.hasSurface) return
+        egl.destroyWindow()
+        surfaceDestroys++
+        emit("egl_surface_destroyed", "reason=$reason")
+    }
 
-        @Synchronized
-        fun threadExiting(thread: GLThread) {
-            thread.done = true
-            if (eglOwner == thread) {
-                eglOwner = null
+    private fun disposeContext(lost: Boolean, reason: String) {
+        if (resourcesLive) {
+            var released = false
+            if (!lost) {
+                try {
+                    released = egl.releaseWithCurrent {
+                        check(egl.isCurrent)
+                        renderer.onSurfaceDestroyed()
+                        checkGl("resource_release")
+                        resourceReleases++
+                        emit("gl_resources_released", renderer.resourceSummary())
+                    }
+                } catch (failure: RuntimeException) {
+                    errorCount++
+                    emit("gl_release_error", "type=${failure.javaClass.simpleName}")
+                }
             }
-            (this as Object).notifyAll()
+            if (!released) {
+                // An invalid/lost context's names must NEVER be deleted in another context.
+                renderer.onContextLost()
+                resourceLost++
+                emit("gl_resources_abandoned", "reason=$reason ${renderer.resourceSummary()}")
+            }
+            resourcesLive = false
         }
+        dropSurface(reason)
+        if (egl.hasContext) {
+            egl.destroyContext()
+            contextDestroys++
+            emit("egl_context_destroyed", "reason=$reason lost=$lost")
+        }
+    }
 
-        @Synchronized
-        fun tryAcquireEglSurface(thread: GLThread): Boolean {
-            if (eglOwner == thread || eglOwner == null) {
-                eglOwner = thread
-                (this as Object).notifyAll()
-                return true
-            }
-            return false
+    private fun checkGl(operation: String) {
+        repeat(8) {
+            val code = GLES30.glGetError()
+            if (code == GLES30.GL_NO_ERROR) return
+            errorCount++
+            emit("gl_error", "operation=$operation code=$code")
+            // GLES context loss forbids further GL cleanup; EGL release remains safe.
+            if (code == 0x0507) throw EglFailure("gl_context_lost", EGL14.EGL_CONTEXT_LOST)
         }
+    }
 
-        @Synchronized
-        fun releaseEglSurface(thread: GLThread) {
-            if (eglOwner == thread) {
-                eglOwner = null
-            }
-            (this as Object).notifyAll()
+    private fun emit(event: String, details: String = "") {
+        diagnostic(event, "thread=$name tid=$id current=${egl.currentId} owned=${egl.contextId} " +
+            "contextGen=$contextGeneration contextDestroy=$contextDestroys surfaceGen=$surfaceGeneration " +
+            "surfaceCreate=$surfaceCreates surfaceDestroy=$surfaceDestroys " +
+            "resourceCreate=$resourceCreates resourceRelease=$resourceReleases resourceLost=$resourceLost " +
+            "errors=$errorCount $details")
+    }
+
+    fun setVisible(value: Boolean) = synchronized(monitor) {
+        visible = value
+        if (!value) idleRequested = true
+        if (value) { renderRequested = true; blocked = false }
+        monitor.notifyAll()
+    }
+    fun resize(w: Int, h: Int) = synchronized(monitor) {
+        width = w; height = h; sizeChanged = true; blocked = false
+        monitor.notifyAll()
+    }
+    fun surfaceCreated(value: SurfaceHolder) = synchronized(monitor) {
+        holder = value
+        sizeChanged = true
+        renderRequested = true
+        blocked = false
+        monitor.notifyAll()
+    }
+    fun surfaceDestroyedAndWait() = synchronized(monitor) {
+        holder = null
+        destroySerial++
+        val expected = destroySerial
+        idleRequested = true
+        monitor.notifyAll()
+        var interrupted = false
+        while (!exited && acknowledgedDestroy < expected && isAlive) {
+            try { monitor.wait() } catch (_: InterruptedException) { interrupted = true }
         }
+        if (interrupted) currentThread().interrupt()
+    }
+    fun requestRebuild(contextToo: Boolean) = synchronized(monitor) {
+        rebuildSurface = true
+        rebuildContext = rebuildContext || contextToo
+        blocked = false
+        renderRequested = true
+        monitor.notifyAll()
+    }
+    fun requestRender() = synchronized(monitor) {
+        renderRequested = true
+        monitor.notifyAll()
+    }
+    fun setRenderMode(value: Int) = synchronized(monitor) {
+        renderMode = value
+        monitor.notifyAll()
+    }
+    fun queueEvent(event: Runnable): Boolean = synchronized(monitor) {
+        if (done || exited || events.size >= 128) return@synchronized false
+        events.addLast(event)
+        renderRequested = true
+        monitor.notifyAll()
+        true
+    }
+    fun requestExitAndWait() {
+        synchronized(monitor) { done = true; monitor.notifyAll() }
+        if (currentThread() == this) return
+        var interrupted = false
+        while (isAlive) {
+            try { join() } catch (_: InterruptedException) { interrupted = true }
+        }
+        if (interrupted) currentThread().interrupt()
     }
 }

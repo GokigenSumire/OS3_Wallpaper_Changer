@@ -12,7 +12,10 @@ import dev.abdus.apps.shimmer.database.ImageEntity
 import dev.abdus.apps.shimmer.database.ImageEntry
 import dev.abdus.apps.shimmer.database.ShimmerDatabase
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +26,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -41,6 +46,8 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
 
     companion object {
         private const val TAG = "ImageFolderRepository"
+        // Repositories can be created by multiple Engines/Activities. Serialize scans across them.
+        private val scanCommitMutex = Mutex()
 
         data class FolderMetadata(
             val folderId: Long,
@@ -86,7 +93,7 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
                 .collect {
                     val currentUri = uriProvider() ?: return@collect
                     if (!isImageManagedAndEnabled(currentUri)) {
-                        Log.d(TAG, "Current image $currentUri invalidated by library change")
+                        Log.d(TAG, "Current image invalidated by library change")
                         withContext(Dispatchers.Main) {
                             onInvalidated()
                         }
@@ -115,44 +122,39 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
     }
 
     suspend fun registerSpecialFolders() = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val favoritesUri = FavoritesFolderResolver.getEffectiveFavoritesUri(prefs)
             val sharedUri = SharedFolderResolver.getEffectiveSharedUri(prefs)
             val timestamp = isoNow()
 
             db.withTransaction {
-                // Cleanup stale default folders if custom ones are active
-                val defaultFavUri = FavoritesFolderResolver.getDefaultFavoritesUri()
-                if (favoritesUri != defaultFavUri) {
-                    dao.deleteFolderByUri(defaultFavUri)
-                }
-
-                val defaultSharedUri = SharedFolderResolver.getDefaultSharedUri()
-                if (sharedUri != defaultSharedUri) {
-                    dao.deleteFolderByUri(defaultSharedUri)
-                }
-
+                // P0 retains previous special folders. Selecting another destination is not
+                // permission to cascade-delete their image configuration.
                 // Ensure folders exist. OnConflictStrategy.IGNORE handles existing ones.
                 dao.insertFolder(FolderEntity(uri = favoritesUri, isEnabled = true, lastScannedAt = null, createdAt = timestamp))
                 dao.insertFolder(FolderEntity(uri = sharedUri, isEnabled = true, lastScannedAt = null, createdAt = timestamp))
             }
-        }.onFailure {
-            Log.e(TAG, "Failed to sync special folders", it)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failed: Exception) {
+            Log.e(TAG, "Failed to sync special folders: ${failed.javaClass.simpleName}")
         }
     }
 
     suspend fun addFolder(uri: Uri) = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val timestamp = isoNow()
             val folderId = db.withTransaction {
-                val insertedId = dao.insertFolder(FolderEntity(uri = uri, isEnabled = true, lastScannedAt = timestamp, createdAt = timestamp))
+                val insertedId = dao.insertFolder(FolderEntity(uri = uri, isEnabled = true, lastScannedAt = null, createdAt = timestamp))
                 if (insertedId != -1L) insertedId else dao.getFolderId(uri)
             }
             if (folderId != null) {
                 scanAndIndex(folderId, uri)
             }
-        }.onFailure {
-            Log.e(TAG, "Failed to add folder", it)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failed: Exception) {
+            Log.e(TAG, "Failed to add folder: ${failed.javaClass.simpleName}")
         }
     }
 
@@ -175,31 +177,46 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
     }
 
     suspend fun scanAndIndex(folderId: Long, folderUri: Uri) = withContext(Dispatchers.IO) {
-        _activeScans.update { it + folderId }
-        try {
-            val existingFiles = dao.getImageUrisAndSizesForFolder(folderId)
-                .associate { it.uri to it.fileSize }
-            
-            val images = scanner.scan(folderUri, existingFiles)
-            val timestamp = isoNow()
-            val entities = images.map {
-                ImageEntity(
-                    folderId = folderId,
-                    uri = it.uri,
-                    createdAt = timestamp,
-                    width = it.width,
-                    height = it.height,
-                    fileSize = it.fileSize,
-                )
+        scanCommitMutex.withLock {
+            _activeScans.update { it + folderId }
+            try {
+                val scanContext = currentCoroutineContext()
+                val existingFiles = dao.getImageUrisAndSizesForFolder(folderId)
+                    .associate { it.uri to it.fileSize }
+                val result = scanner.scan(folderUri, existingFiles) { scanContext.ensureActive() }
+                val committed = commitCompletedScan(result, { scanContext.ensureActive() }) { images ->
+                    val timestamp = isoNow()
+                    val entities = images.map {
+                        ImageEntity(
+                            folderId = folderId,
+                            uri = it.uri,
+                            createdAt = timestamp,
+                            width = it.width,
+                            height = it.height,
+                            fileSize = it.fileSize,
+                        )
+                    }
+                    db.withTransaction {
+                        scanContext.ensureActive()
+                        // P0 is deliberately add-only. An empty/filtered provider view is not proof
+                        // that the user deleted a source. Explicit removal remains a user action.
+                        dao.insertImages(entities)
+                        dao.updateFolderLastScanned(folderId, timestamp)
+                        scanContext.ensureActive()
+                    }
+                }
+                if (committed) {
+                    Log.i(TAG, "Scan committed; existing image configuration retained")
+                } else {
+                    val reason = (result as ScanResult.Failed).reason
+                    Log.w(TAG, "Scan not committed: $reason; existing image configuration retained")
+                }
+            } catch (cancelled: CancellationException) {
+                Log.i(TAG, "Scan cancelled; cancellation propagated")
+                throw cancelled
+            } finally {
+                _activeScans.update { it - folderId }
             }
-
-            db.withTransaction {
-                dao.insertImages(entities)
-                dao.deleteInvalidImages(folderId, images.map { it.uri })
-                dao.updateFolderLastScanned(folderId, timestamp)
-            }
-        } finally {
-            _activeScans.update { it - folderId }
         }
     }
 
@@ -217,13 +234,15 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
         image.uri
     }
 
+    @Suppress("UNUSED_PARAMETER")
     suspend fun markImageAsInvalid(uri: Uri) = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Marking image as invalid (deleting): $uri")
-        dao.deleteImageByUri(uri)
+        // Decode/permission/provider failure does not establish that an image was removed.
+        // The caller can skip this attempt; source reconciliation is a separate P1 concern.
+        Log.w(TAG, "Image read failed; committed image configuration retained")
     }
 
     suspend fun incrementFavoriteRank(uri: Uri) = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Incrementing favorite rank for $uri")
+        Log.d(TAG, "Incrementing favorite rank")
         dao.incrementFavoriteRank(uri)
     }
 
@@ -232,11 +251,11 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
     }
 
     suspend fun addSingleImageToFolder(folderUri: Uri, imageUri: Uri, width: Int? = null, height: Int? = null, fileSize: Long? = null) = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Adding single image to folder: $folderUri -> $imageUri")
+        Log.d(TAG, "Adding single image to folder")
         val folderId = dao.getFolderId(folderUri)
 
         if (folderId == null) {
-            Log.e(TAG, "Folder $folderUri not found in DB")
+            Log.e(TAG, "Folder not found in DB")
             return@withContext
         }
 
@@ -250,13 +269,15 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
             fileSize = fileSize,
         )
 
-        runCatching {
+        try {
             db.withTransaction {
                 dao.insertImages(listOf(entity))
                 dao.updateFolderLastScanned(folderId, timestamp)
             }
-        }.onFailure {
-            Log.e(TAG, "Failed to add single image to folder $folderUri", it)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failed: Exception) {
+            Log.e(TAG, "Failed to add single image to folder: ${failed.javaClass.simpleName}")
         }
     }
 
@@ -283,7 +304,8 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
 
     suspend fun getCurrentImageName(uri: Uri?): String? = withContext(Dispatchers.IO) {
         if (uri == null) return@withContext null
-        runCatching {
+        try {
+            currentCoroutineContext().ensureActive()
             appContext.contentResolver.query(
                 uri,
                 arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
@@ -292,8 +314,12 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
                 null,
             )?.use { c ->
                 if (c.moveToFirst()) c.getString(0) else null
-            }
-        }.getOrNull() ?: uri.lastPathSegment
+            } ?: uri.lastPathSegment
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            uri.lastPathSegment
+        }
     }
 
     suspend fun refreshEnabledFolders() = withContext(Dispatchers.IO) {
@@ -347,7 +373,7 @@ class ImageFolderRepository(context: Context, private val scope: CoroutineScope)
                 "$storageLabel/$decodedPath"
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to format path for ${uri}", e)
+            Log.w(TAG, "Failed to format display path: ${e.javaClass.simpleName}")
             uri.toString()
         }
     }

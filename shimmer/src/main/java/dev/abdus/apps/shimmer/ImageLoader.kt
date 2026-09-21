@@ -8,6 +8,7 @@ import android.net.Uri
 import android.util.Log
 import dev.abdus.apps.shimmer.gl.MAX_SUPPORTED_BLUR_RADIUS_PIXELS
 import dev.abdus.apps.shimmer.gl.generateBlurLevels
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlin.math.ceil
@@ -38,13 +39,19 @@ class ImageLoader(
      * Loads an image from a URI with optimal downsampling.
      */
     suspend fun loadFromUri(uri: Uri, blurAmount: Float): ImageSet? {
+        currentCoroutineContext().ensureActive()
         val targetHeight = if (screenHeight > 0) screenHeight else DEFAULT_SCREEN_HEIGHT
         val bitmap = try {
             decodeSampledBitmapFromUri(uri, targetHeight)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load URI: $uri", e)
+            Log.e(TAG, "Image load failed: ${e.javaClass.simpleName}")
             null
-        } ?: return null
+        } ?: run {
+            currentCoroutineContext().ensureActive()
+            return null
+        }
 
         return prepareImageSet(bitmap, blurAmount, id = uri.toString())
     }
@@ -53,13 +60,19 @@ class ImageLoader(
      * Loads the default wallpaper with optimal downsampling.
      */
     suspend fun loadDefault(blurAmount: Float): ImageSet? {
+        currentCoroutineContext().ensureActive()
         val targetHeight = if (screenHeight > 0) screenHeight else DEFAULT_SCREEN_HEIGHT
         val bitmap = try {
             decodeSampledBitmapFromResource(R.drawable.default_wallpaper, targetHeight)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load default wallpaper", e)
+            Log.e(TAG, "Default wallpaper load failed: ${e.javaClass.simpleName}")
             null
-        } ?: return null
+        } ?: run {
+            currentCoroutineContext().ensureActive()
+            return null
+        }
 
         return prepareImageSet(bitmap, blurAmount, id = "default")
     }
@@ -78,7 +91,7 @@ class ImageLoader(
         options.inSampleSize = calculateInSampleSize(options.outHeight, reqHeight)
         options.inJustDecodeBounds = false
 
-        Log.d(TAG, "Decoding URI $uri: original_h=${options.outHeight}, target_h=$reqHeight, sampleSize=${options.inSampleSize}")
+        Log.d(TAG, "Decoding image: original_h=${options.outHeight}, target_h=$reqHeight, sampleSize=${options.inSampleSize}")
 
         // Pass 2: Decode actual bitmap
         return contentResolver.openInputStream(uri)?.use { stream ->
@@ -119,20 +132,30 @@ class ImageLoader(
 
     private suspend fun prepareImageSet(bitmap: Bitmap, blurAmount: Float, id: String): ImageSet {
         val maxRadius = ceil(blurAmount * MAX_SUPPORTED_BLUR_RADIUS_PIXELS)
-
-        // Use currentCoroutineContext() from the kotlinx.coroutines package
         val context = currentCoroutineContext()
-        val blurResult = bitmap.generateBlurLevels(maxRadius) {
+        var blurred = emptyList<Bitmap>()
+        try {
             context.ensureActive()
-        }
+            val blurResult = bitmap.generateBlurLevels(maxRadius) {
+                context.ensureActive()
+            }
+            blurred = blurResult.bitmaps
+            // The blur helper can use a fallback after a GPU failure. Cancellation still wins.
+            context.ensureActive()
 
-        return ImageSet(
-            id = id,
-            original = bitmap,
-            blurred = blurResult.bitmaps,
-            blurRadii = blurResult.radii,
-            width = bitmap.width,
-            height = bitmap.height
-        )
+            return ImageSet(
+                id = id,
+                original = bitmap,
+                blurred = blurred,
+                blurRadii = blurResult.radii,
+                width = bitmap.width,
+                height = bitmap.height
+            )
+        } catch (failed: Throwable) {
+            // Ownership transfers only on return; failed/cancelled preparation releases it here.
+            blurred.forEach { if (!it.isRecycled) it.recycle() }
+            if (!bitmap.isRecycled) bitmap.recycle()
+            throw failed
+        }
     }
 }

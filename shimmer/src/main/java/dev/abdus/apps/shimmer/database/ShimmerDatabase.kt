@@ -223,7 +223,6 @@ abstract class ShimmerDatabase : RoomDatabase() {
                     ShimmerDatabase::class.java,
                     "shimmer_database"
                 )
-                .fallbackToDestructiveMigration()
                 .build()
                 INSTANCE = instance
                 instance

@@ -14,6 +14,7 @@ class ImageRenderer {
 
     val aspectRatio: Float get() = textures.aspectRatio
     val isEmpty: Boolean get() = textures.isEmpty
+    val textureCount: Int get() = textures.size
 
     fun load(imageSet: ImageSet) {
         val newHash = imageSet.hashCode()

@@ -5,4 +5,5 @@ pluginManagement {
     }
 }
 
+rootProject.name = 'OS3_Wallpaper_Changer'
 include ':shimmer'

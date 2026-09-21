@@ -10,11 +10,11 @@ android {
     compileSdk libs.versions.compileSdk.get().toInteger()
 
     defaultConfig {
-        applicationId "dev.abdus.apps.shimmer"
+        applicationId "personal.wallpaper.os3"
         minSdkVersion libs.versions.minSdk.get().toInteger()
-        targetSdkVersion libs.versions.targetSdk.get()
-        versionCode project.hasProperty('version.code') ? project.property('version.code').toInteger() : 1
-        versionName project.hasProperty('version.name') ? project.property('version.name') : '1.0.0'
+        targetSdkVersion libs.versions.targetSdk.get().toInteger()
+        versionCode 1
+        versionName '0.0.1-p0'
     }
 
     // Load keystore properties from keystore.properties file if it exists
@@ -35,12 +35,6 @@ android {
                 keyAlias System.getenv("KEY_ALIAS") ?: keystoreProperties['keyAlias'] ?: project.findProperty("KEY_ALIAS")
                 keyPassword System.getenv("KEY_PASSWORD") ?: keystoreProperties['keyPassword'] ?: project.findProperty("KEY_PASSWORD")
             }
-            debug {
-                storeFile file(keystorePath)
-                storePassword System.getenv("KEYSTORE_PASSWORD") ?: keystoreProperties['storePassword'] ?: project.findProperty("KEYSTORE_PASSWORD")
-                keyAlias System.getenv("KEY_ALIAS") ?: keystoreProperties['keyAlias'] ?: project.findProperty("KEY_ALIAS")
-                keyPassword System.getenv("KEY_PASSWORD") ?: keystoreProperties['keyPassword'] ?: project.findProperty("KEY_PASSWORD")
-            }
         }
     }
 
@@ -53,9 +47,9 @@ android {
             }
         }
         debug {
-            if (keystorePath) {
-                signingConfig signingConfigs.debug
-            }
+            applicationIdSuffix '.debug'
+            versionNameSuffix '-debug'
+            // The standard local Android debug key is never replaced with the release key.
         }
     }
 
@@ -70,6 +64,7 @@ android {
 
     buildFeatures {
         compose true
+        buildConfig true
     }
 
     composeOptions {
@@ -78,6 +73,7 @@ android {
 }
 
 dependencies {
+    testImplementation 'junit:junit:4.13.2'
     implementation libs.appCompat
     implementation platform(libs.composeBom)
     androidTestImplementation platform(libs.composeBom)
