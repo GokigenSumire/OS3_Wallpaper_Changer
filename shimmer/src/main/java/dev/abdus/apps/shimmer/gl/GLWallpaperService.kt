@@ -180,9 +180,9 @@ private class EglHelper(
             throw EglFailure("create_window", EGL14.eglGetError())
         }
         window = created
-        onCreated()
         checked(EGL14.eglMakeCurrent(display, window, window, context), "make_current")
         checked(EGL14.eglSwapInterval(display, 1), "swap_interval")
+        onCreated()
     }
 
     fun swap() { checked(EGL14.eglSwapBuffers(display, window), "swap_buffers") }

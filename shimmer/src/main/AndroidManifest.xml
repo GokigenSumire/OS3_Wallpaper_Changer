@@ -72,7 +72,8 @@
         </activity>
 
         <activity android:name=".p0.P0EditActivity" android:exported="false"
-            android:launchMode="singleTop" android:theme="@style/Theme.OS3.P0" />
+            android:launchMode="singleTop" android:taskAffinity="personal.wallpaper.os3.p0.edit"
+            android:theme="@style/Theme.OS3.P0" />
         <activity android:name=".p0.P0SurfaceLabActivity" android:exported="false"
             android:theme="@style/Theme.OS3.P0" />
 

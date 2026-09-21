@@ -24,13 +24,12 @@ class P0DiagnosticsActivity : ComponentActivity() {
     private lateinit var output: TextView
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
-    private var exportSnapshot = ""
     private var importGeneration = 0
     private var stopped = false
 
     private val exportDocument = registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         if (uri != null) {
-            val snapshot = exportSnapshot
+            val snapshot = P0Diagnostics.export()
             worker.execute {
             try {
                 val stream = contentResolver.openOutputStream(uri, "w") ?: error("NO_OUTPUT_STREAM")
@@ -93,7 +92,6 @@ class P0DiagnosticsActivity : ComponentActivity() {
         column.button("打开真实 Surface 重建实验室") { startActivity(Intent(this, P0SurfaceLabActivity::class.java)) }
         column.button("刷新摘要与 Engine 列表") { refresh() }
         column.button("导出当前诊断摘要与事件") {
-            exportSnapshot = P0Diagnostics.export()
             exportDocument.launch("WallpaperP0-${P0Diagnostics.session}.txt")
         }
         column.label("以下重建针对选定 Engine 的 EGLSurface/context，隐藏时等待下次可见执行；" +

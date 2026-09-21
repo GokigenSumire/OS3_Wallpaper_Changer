@@ -57,6 +57,8 @@ object P0Diagnostics {
         enabled = value
         // Never clear previous evidence; a restart/stop is a separate event.
         append("APP", if (value) "DIAGNOSTICS_START" else "DIAGNOSTICS_STOP", "session=$session")
+        app.getSharedPreferences("p0_diagnostics", Context.MODE_PRIVATE).edit()
+            .putBoolean("enabled", value).apply()
     }
 
     @Synchronized fun event(scope: String, kind: String, detail: String = "") {

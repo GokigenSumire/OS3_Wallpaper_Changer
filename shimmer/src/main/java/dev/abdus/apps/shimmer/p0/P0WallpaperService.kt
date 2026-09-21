@@ -65,6 +65,9 @@ class P0WallpaperService : GLWallpaperService() {
         private var fixture: ImageSet? = null // Main-thread receipt of completed GL upload, not just queue acceptance.
         private val ownedImages = mutableSetOf<ImageSet>() // Main thread; covers every accepted, unconsumed payload.
         private var glFixture: ImageSet? = null // GL thread only.
+        @Volatile private var pendingUpload: PendingUpload? = null
+        private var uploadQueued = false
+        private data class PendingUpload(val image: ImageSet, val generation: Int)
         private val loader = Executors.newSingleThreadExecutor()
         private lateinit var renderer: ShimmerRenderer
         private lateinit var gestures: P0GestureDetector
@@ -118,29 +121,52 @@ class P0WallpaperService : GLWallpaperService() {
         private fun publish(image: ImageSet) {
             val generation = loadGeneration
             ownedImages.add(image)
-            if (queueEvent {
-                if (generation != loadGeneration) {
-                    main.post { releaseOwned(image) }
+            val previousPending = pendingUpload
+            pendingUpload = PendingUpload(image, generation)
+            if (previousPending != null) releaseOwned(previousPending.image)
+            scheduleUploadIfNeeded()
+        }
+
+        /** Main-thread scheduler keeps at most one GL upload closure and only the newest payload. */
+        private fun scheduleUploadIfNeeded() {
+            if (destroyed || uploadQueued || pendingUpload == null) return
+            uploadQueued = true
+            val accepted = queueEvent {
+                val pending = pendingUpload
+                pendingUpload = null
+                main.post {
+                    uploadQueued = false
+                    scheduleUploadIfNeeded()
+                }
+                if (pending == null) return@queueEvent
+                if (pending.generation != loadGeneration) {
+                    main.post { releaseOwned(pending.image) }
                 } else {
                     val previous = glFixture
                     renderer.setEffectTransitionDuration(0)
-                    renderer.setImage(image)
+                    renderer.setImage(pending.image)
                     renderer.enableBlur(false, true)
-                    glFixture = image
+                    glFixture = pending.image
                     main.post {
-                        if (!destroyed && generation == loadGeneration) {
-                            fixture = image
-                            if (previous != null && previous !== image) releaseOwned(previous)
-                            P0Diagnostics.event(scopeId, "FIXTURE_UPLOAD_ACK", "testImage=${image.id} generation=$generation " +
+                        if (destroyed || pending.generation != loadGeneration) {
+                            releaseOwned(pending.image)
+                        } else {
+                            fixture = pending.image
+                            if (previous != null && previous !== pending.image) releaseOwned(previous)
+                            P0Diagnostics.event(scopeId, "FIXTURE_UPLOAD_ACK", "testImage=${pending.image.id} generation=${pending.generation} " +
                                 "presentedUnconfirmed=true")
                         }
                     }
                 }
-            }) {
-                requestRender()
-            } else {
-                releaseOwned(image)
+            }
+            if (!accepted) {
+                uploadQueued = false
+                val rejected = pendingUpload
+                pendingUpload = null
+                rejected?.let { releaseOwned(it.image) }
                 P0Diagnostics.event(scopeId, "FIXTURE_QUEUE_REJECTED", "configRetained=true")
+            } else {
+                requestRender()
             }
         }
 
@@ -182,7 +208,7 @@ class P0WallpaperService : GLWallpaperService() {
             val bounds = if (Build.VERSION.SDK_INT >= 30) wm.maximumWindowMetrics.bounds.toShortString()
                 else "${resources.displayMetrics.widthPixels}x${resources.displayMetrics.heightPixels}"
             P0Diagnostics.event(scopeId, "VIEWPORT_BASELINE", "generation=$surfaceGeneration surface=${width}x$height " +
-                "displayBounds=$bounds desired=${desiredMinimumWidth}x$desiredMinimumHeight density=${resources.displayMetrics.density}")
+                "displayBounds=$bounds density=${resources.displayMetrics.density}")
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
@@ -211,6 +237,8 @@ class P0WallpaperService : GLWallpaperService() {
             super.onDestroy() // Joins GL thread before CPU bitmaps can be recycled.
             ownedImages.forEach { it.recycleAll() }
             ownedImages.clear()
+            pendingUpload = null
+            uploadQueued = false
             fixture = null
             P0Diagnostics.event(scopeId, "ENGINE_DESTROY", "surfaceGeneration=$surfaceGeneration")
         }
