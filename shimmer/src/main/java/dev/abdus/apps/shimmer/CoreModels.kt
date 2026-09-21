@@ -1,0 +1,139 @@
+package dev.abdus.apps.shimmer
+
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.view.animation.DecelerateInterpolator
+import kotlinx.serialization.Serializable
+
+/**
+ * Represents the target state of the wallpaper.
+ * All user-configurable properties should be here.
+ *
+ * @property imageSet The image set with original and blurred versions
+ * @property blurPercent Normalized blur amount (0.0 = no blur, 1.0 = full blur)
+ * @property dimAmount Dim overlay amount (0.0 = no dimming, 1.0 = full dimming)
+ * @property duotone Duotone color effect configuration
+ * @property duotoneAlwaysOn Whether duotone is always visible (true) or only when blurred (false)
+ * @property parallaxOffset Parallax scroll position (0.0 = left, 0.5 = center, 1.0 = right)
+ * @property grain Film grain overlay settings
+ * @property chromaticAberration Chromatic aberration effect settings
+ */
+data class RenderState(
+    val imageSet: ImageSet,
+    val blurPercent: Float,
+    val dimAmount: Float,
+    val duotone: Duotone,
+    val duotoneAlwaysOn: Boolean,
+    val parallaxOffset: Float,
+    val grain: GrainSettings,
+    val chromaticAberration: ChromaticAberrationSettings,
+)
+
+/**
+ * Film grain overlay settings.
+ * @property enabled Whether grain is applied
+ * @property amount Strength of the grain (0.0 = off, 1.0 = strong)
+ * @property scale Normalized grain size slider (0.0 = fine, 1.0 = coarse)
+ */
+@Serializable
+data class GrainSettings(
+    val enabled: Boolean = false,
+    val amount: Float = 0.18f,
+    val scale: Float = 0.5f,
+) {
+    companion object {
+        /** Minimum grain size in image pixels (fine grain) */
+        const val GRAIN_SIZE_MIN_IMAGE_PX = 0.1f
+
+        /** Maximum grain size in image pixels (coarse grain) */
+        const val GRAIN_SIZE_MAX_IMAGE_PX = 1.5f
+    }
+}
+
+
+data class TouchPoint(
+    val id: Int,
+    var x: Float,
+    var y: Float,
+    var radius: Float = 0f,
+    var intensity: Float = 1f,
+    var isReleased: Boolean = false,
+    val radiusAnimator: TickingFloatAnimator = TickingFloatAnimator(4000, DecelerateInterpolator()),
+    val fadeAnimator: TickingFloatAnimator = TickingFloatAnimator(500, DecelerateInterpolator())
+)
+
+
+/**
+ * Represents a processed image and its blur keyframes.
+ */
+data class ImageSet(
+    val original: Bitmap,
+    val blurred: List<Bitmap> = emptyList(),
+    val blurRadii: List<Float> = emptyList(),
+    val id: String = "",
+    val width: Int = original.width,
+    val height: Int = original.height,
+) {
+    val aspectRatio: Float = if (height == 0) 1f else width.toFloat() / height
+}
+
+fun ImageSet.recycleAll() {
+    if (!original.isRecycled) original.recycle()
+    blurred.forEach { if (!it.isRecycled) it.recycle() }
+}
+
+/**
+ * Represents surface dimensions with width, height, and computed aspect ratio.
+ */
+data class SurfaceDimensions(
+    val width: Int,
+    val height: Int
+) {
+    val aspectRatio: Float
+        get() = if (height == 0) 1f else width.toFloat() / height
+}
+
+enum class DuotoneBlendMode(val value: Int) {
+    NORMAL(0),
+    SCREEN(1),
+}
+
+data class Duotone(
+    val lightColor: Int = Color.WHITE,
+    val darkColor: Int = Color.BLACK,
+    val opacity: Float = 0f,
+    val blendMode: DuotoneBlendMode = DuotoneBlendMode.NORMAL,
+)
+
+enum class TouchAction {
+    DOWN, MOVE, UP
+}
+
+data class TouchData(
+    val id: Int,
+    val x: Float,
+    val y: Float,
+    val action: TouchAction,
+)
+
+@Serializable
+enum class GestureAction {
+    TOGGLE_BLUR,
+    ADD_TO_FAVORITES,
+    RANDOM_DUOTONE,
+    NEXT_IMAGE,
+    NONE,
+}
+
+@Serializable
+data class GestureSettings(
+    val tripleTapAction: GestureAction = GestureAction.TOGGLE_BLUR,
+    val twoFingerDoubleTapAction: GestureAction = GestureAction.NEXT_IMAGE,
+    val threeFingerDoubleTapAction: GestureAction = GestureAction.NONE,
+) {
+    fun toMap(): Map<TapGesture, GestureAction> = mapOf(
+        TapGesture.TRIPLE_TAP to tripleTapAction,
+        TapGesture.TWO_FINGER_DOUBLE_TAP to twoFingerDoubleTapAction,
+        TapGesture.THREE_FINGER_DOUBLE_TAP to threeFingerDoubleTapAction,
+    )
+}

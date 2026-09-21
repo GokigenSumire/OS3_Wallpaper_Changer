@@ -1,0 +1,483 @@
+package dev.abdus.apps.shimmer
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.SharedPreferences
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.MotionEvent
+import android.view.SurfaceHolder
+import dev.abdus.apps.shimmer.gl.GLWallpaperService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+class ShimmerWallpaperService : GLWallpaperService() {
+    companion object {
+        const val TAG = "ShimmerWallpaperService"
+    }
+
+    override fun onCreateEngine(): Engine = ShimmerWallpaperEngine()
+
+    inner class ShimmerWallpaperEngine : GLEngine(), ShimmerRenderer.Callbacks {
+
+        private var renderer: ShimmerRenderer? = null
+        private var rendererReady = false
+        private var engineVisible = true
+
+        override fun requestRender() {
+            if (engineVisible) super.requestRender()
+        }
+
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val preferences = WallpaperPreferences.create(this@ShimmerWallpaperService)
+        private val folderRepository = ImageFolderRepository(this@ShimmerWallpaperService, scope)
+        private val favoritesRepository = FavoritesRepository(this@ShimmerWallpaperService, preferences, folderRepository)
+        private val imageLoader = ImageLoader(contentResolver, resources)
+        private val cycleScheduler =
+            ImageCycleScheduler(scope, { preferences.getImageCycleSettings().intervalMillis }) {
+                Log.d(TAG, "ImageCycleScheduler triggered image cycle")
+                requestImageCycle()
+            }
+        private val tapGestureDetector = TapGestureDetector(this@ShimmerWallpaperService)
+        private val touchEffectController = TouchEffectController(
+            onTouchPointsChanged = { touchPoints ->
+                renderer?.setTouchPoints(touchPoints)
+            },
+        )
+
+        private var cachedImageSet: ImageSet? = null
+        private var pendingImageUri: Uri? = null
+        private var imageLoadingJob: kotlinx.coroutines.Job? = null
+        private var imageCycleJob: kotlinx.coroutines.Job? = null
+        private var currentImageUri: Uri? = null
+        private var sessionBlurEnabled = preferences.getBlurAmount() > 0f
+
+        private var surfaceDimensions = SurfaceDimensions(0, 0)
+
+        private var gestureActionMap: Map<TapGesture, GestureAction> = emptyMap()
+
+        private val blurTimeoutHandler = Handler(Looper.getMainLooper())
+        private val blurTimeoutRunnable = Runnable {
+            if (preferences.isBlurTimeoutEnabled() && engineVisible) {
+                sessionBlurEnabled = true
+                applyBlurState(immediate = false)
+            }
+        }
+
+
+        private val preferenceListener =
+            SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                syncRendererSettings(key)
+            }
+
+        override fun onCreate(surfaceHolder: SurfaceHolder) {
+            super.onCreate(surfaceHolder)
+            Log.d(TAG, "Engine onCreate: initializing renderer and resources")
+            renderer = ShimmerRenderer(this)
+            setEGLContextClientVersion(3)
+            setRenderer(renderer!!)
+            setRenderMode(RENDERMODE_WHEN_DIRTY)
+            setTouchEventsEnabled(true)
+            setOffsetNotificationsEnabled(true)
+
+            refreshGestureActionCache()
+            preferences.registerListener(preferenceListener)
+            Actions.registerReceivers(this@ShimmerWallpaperService, shortcutReceiver)
+            registerReceiver(screenUnlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
+
+            folderRepository.observeImageInvalidation({ currentImageUri }) {
+                Log.d(TAG, "Current image invalidated by library change, forcing switch")
+                requestImageCycle()
+            }
+        }
+
+        private fun syncRendererSettings(key: String? = null) {
+            val r = renderer ?: return
+            if (!rendererReady) return
+
+            val syncEverything = key == null
+
+            if (key == WallpaperPreferences.KEY_GESTURE_SETTINGS) {
+                refreshGestureActionCache()
+                return
+            }
+
+            if (key == WallpaperPreferences.KEY_BLUR_AMOUNT) {
+                reBlurCurrentImage()
+                return
+            }
+
+            queueEvent {
+                if (syncEverything ||
+                    key == WallpaperPreferences.KEY_DIM_AMOUNT ||
+                    key == WallpaperPreferences.KEY_DUOTONE_SETTINGS ||
+                    key == WallpaperPreferences.KEY_GRAIN_SETTINGS ||
+                    key == WallpaperPreferences.KEY_CHROMATIC_ABERRATION_SETTINGS ||
+                    key == WallpaperPreferences.KEY_EFFECT_TRANSITION_DURATION
+                ) {
+                    r.updateSettings(
+                        blurAmount = preferences.getBlurAmount(),
+                        dimAmount = preferences.getDimAmount(),
+                        duotone = preferences.getDuotoneSettings(),
+                        grain = preferences.getGrainSettings(),
+                        chromatic = preferences.getChromaticAberrationSettings(),
+                        transitionDuration = preferences.getEffectTransitionDurationMillis(),
+                    )
+                }
+
+                if (syncEverything) {
+                    applyBlurState(immediate = true)
+                }
+
+                if (syncEverything ||
+                    key == WallpaperPreferences.KEY_IMAGE_CYCLE_SETTINGS
+                ) {
+                    cycleScheduler.updateEnabled(preferences.getImageCycleSettings().enabled)
+                }
+            }
+        }
+
+        private fun applyBlurState(immediate: Boolean) {
+            val r = renderer ?: return
+            val blurOnLock = preferences.isBlurOnScreenLockEnabled()
+            val isOnLockScreen =
+                (getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager)
+                    ?.isKeyguardLocked
+                    ?: false
+            val isScreenOn =
+                (getSystemService(POWER_SERVICE) as? android.os.PowerManager)?.isInteractive
+                    ?: true
+
+            val shouldForceBlur = blurOnLock && (isOnLockScreen || !isScreenOn)
+            val effectiveBlur = shouldForceBlur || sessionBlurEnabled
+
+            r.enableBlur(effectiveBlur, immediate || (shouldForceBlur && !isScreenOn))
+
+            blurTimeoutHandler.removeCallbacks(blurTimeoutRunnable)
+            if (!effectiveBlur && preferences.isBlurTimeoutEnabled()) {
+                blurTimeoutHandler.postDelayed(
+                    blurTimeoutRunnable,
+                    preferences.getBlurTimeoutMillis(),
+                )
+            }
+        }
+
+        override fun onRendererReady() {
+            rendererReady = true
+            syncRendererSettings(null)
+
+            val cached = cachedImageSet
+            if (cached != null) {
+                queueEvent { renderer?.setImage(cached) }
+                return
+            }
+
+            scope.launch {
+                val lastUri = folderRepository.getCurrentImageUri()
+                val uriToLoad = if (lastUri != null && folderRepository.isImageUriValid(lastUri)) {
+                    lastUri
+                } else {
+                    folderRepository.nextImageUri()
+                }
+
+                if (uriToLoad != null) {
+                    loadImage(uriToLoad)
+                } else {
+                    loadDefaultImage()
+                }
+                cycleScheduler.start()
+            }
+        }
+
+        private fun reBlurCurrentImage() {
+            val uri = currentImageUri
+            scope.launch(Dispatchers.IO) {
+                val newSet = if (uri != null) {
+                    imageLoader.loadFromUri(uri, preferences.getBlurAmount())
+                } else {
+                    imageLoader.loadDefault(preferences.getBlurAmount())
+                }
+
+                if (newSet != null) {
+                    updateActiveImageSet(newSet, uri)
+                }
+            }
+        }
+
+        override fun onReadyForNextImage() {
+            val uri = pendingImageUri ?: return
+            pendingImageUri = null
+            loadImage(uri)
+        }
+
+        private fun loadImage(uri: Uri) {
+            imageLoadingJob?.cancel()
+
+            imageLoadingJob = scope.launch {
+                val blurAmount = preferences.getBlurAmount()
+                val newSet = imageLoader.loadFromUri(uri, blurAmount)
+
+                if (isActive && newSet != null) {
+                    updateActiveImageSet(newSet, uri)
+                } else {
+                    newSet?.original?.recycle()
+                    newSet?.blurred?.forEach { it.recycle() }
+                }
+            }
+        }
+
+
+        private fun loadDefaultImage() {
+            imageLoadingJob?.cancel()
+            imageLoadingJob = scope.launch {
+                val newSet = imageLoader.loadDefault(preferences.getBlurAmount())
+                if (isActive && newSet != null) {
+                    updateActiveImageSet(newSet, null)
+                } else {
+                    newSet?.original?.recycle()
+                    newSet?.blurred?.forEach { it.recycle() }
+                }
+            }
+        }
+
+        private fun updateActiveImageSet(newSet: ImageSet, uri: Uri?) {
+            val oldSet = cachedImageSet
+            cachedImageSet = newSet
+            currentImageUri = uri
+
+            queueEvent {
+                renderer?.setImage(newSet)
+                scope.launch(Dispatchers.Default) {
+                    oldSet?.recycleAll()
+                }
+            }
+        }
+
+        private fun requestImageCycle() {
+            if (renderer?.isAnimating() == true) {
+                scope.launch {
+                    val next = folderRepository.nextImageUri()
+                    if (next != null) pendingImageUri = next
+                }
+                return
+            }
+
+            if (imageCycleJob?.isActive == true) return
+
+            imageCycleJob = scope.launch {
+                var attempts = 0
+                while (attempts < 5) {
+                    val nextUri = folderRepository.nextImageUri()
+                    if (nextUri == null) {
+                        Log.d(TAG, "No images available in DB")
+                        break
+                    }
+
+                    try {
+                        val blurAmount = preferences.getBlurAmount()
+                        val newSet = imageLoader.loadFromUri(nextUri, blurAmount)
+                            ?: throw java.io.FileNotFoundException("Failed to load bitmap")
+
+                        updateActiveImageSet(newSet, nextUri)
+                        cycleScheduler.resetTimer()
+                        return@launch
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Image $nextUri failed to load, marking invalid and retrying", e)
+                        folderRepository.markImageAsInvalid(nextUri)
+                        attempts++
+                    }
+                }
+                
+                if (attempts >= 5) {
+                    Log.w(TAG, "Failed to find a valid image after 5 attempts, loading default")
+                    loadDefaultImage()
+                }
+            }
+        }
+
+        override fun onTouchEvent(event: MotionEvent) {
+            touchEffectController.onTouchEvent(
+                event,
+                surfaceDimensions.width,
+                surfaceDimensions.height,
+            )
+
+            val gesture = tapGestureDetector.onTouchEvent(event)
+            if (gesture != TapGesture.NONE) {
+                handleGesture(gesture)
+            }
+
+            if (preferences.isBlurTimeoutEnabled()) {
+                blurTimeoutHandler.removeCallbacks(blurTimeoutRunnable)
+                if (!sessionBlurEnabled) {
+                    blurTimeoutHandler.postDelayed(
+                        blurTimeoutRunnable,
+                        preferences.getBlurTimeoutMillis(),
+                    )
+                }
+            }
+
+            super.onTouchEvent(event)
+        }
+
+        private fun refreshGestureActionCache() {
+            gestureActionMap = preferences.getGestureSettings().toMap()
+        }
+
+        private fun handleGesture(gesture: TapGesture) {
+            val action = gestureActionMap[gesture] ?: GestureAction.NONE
+
+            when (action) {
+                GestureAction.NEXT_IMAGE -> requestImageCycle()
+                GestureAction.TOGGLE_BLUR -> {
+                    sessionBlurEnabled = !sessionBlurEnabled
+                    applyBlurState(immediate = false)
+                    cycleScheduler.pauseTemporarily()
+                }
+
+                GestureAction.RANDOM_DUOTONE -> applyNextDuotone()
+                GestureAction.ADD_TO_FAVORITES -> addCurrentImageToFavorites()
+                GestureAction.NONE -> {}
+            }
+        }
+
+        override fun onVisibilityChanged(visible: Boolean) {
+            super.onVisibilityChanged(visible)
+            engineVisible = visible
+
+            cycleScheduler.setVisible(visible)
+            if (visible) {
+                applyBlurState(immediate = false)
+                queueEvent { renderer?.onVisibilityChanged() }
+            }
+        }
+
+        override fun onOffsetsChanged(x: Float, y: Float, xs: Float, ys: Float, xp: Int, yp: Int) {
+            cycleScheduler.pauseTemporarily()
+            renderer?.setParallaxOffset(x)
+        }
+
+        override fun onSurfaceDimensionsChanged(width: Int, height: Int) {
+            surfaceDimensions = SurfaceDimensions(width, height)
+            imageLoader.setScreenHeight(height)
+        }
+
+        private val shortcutReceiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    when (intent.action) {
+                        Actions.ACTION_NEXT_IMAGE -> requestImageCycle()
+                        Actions.ACTION_NEXT_DUOTONE -> applyNextDuotone()
+                        Actions.ACTION_REFRESH_FOLDERS -> scope.launch { folderRepository.refreshEnabledFolders() }
+                        Actions.ACTION_ADD_TO_FAVORITES -> addCurrentImageToFavorites()
+                        Actions.ACTION_SET_BLUR_PERCENT -> {
+                            intent.let {
+                                Actions.BlurPercentAction.fromIntent(it)?.let { action ->
+                                    preferences.setBlurAmount(action.percent)
+                                }
+                            }
+                        }
+
+                        Actions.ACTION_ENABLE_BLUR -> {
+                            sessionBlurEnabled = true
+                            applyBlurState(false)
+                        }
+
+                        Actions.ACTION_SET_IMAGE -> {
+                            val uri = intent.getParcelableExtra<Uri>(Actions.EXTRA_IMAGE_URI)
+                            if (uri != null) {
+                                scope.launch {
+                                    folderRepository.updateImageLastShown(uri)
+                                    loadImage(uri)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+        private val screenUnlockReceiver =
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    if (intent.action == Intent.ACTION_USER_PRESENT) {
+                        if (preferences.isBlurOnScreenLockEnabled() &&
+                            !preferences.isUnblurOnUnlockEnabled()
+                        ) {
+                            sessionBlurEnabled = true
+                        }
+
+                        applyBlurState(immediate = false)
+
+                        if (preferences.getImageCycleSettings().cycleOnUnlock) {
+                            requestImageCycle()
+                        }
+                    }
+                }
+            }
+
+        private fun applyNextDuotone() {
+            val nextIndex = (preferences.getDuotonePresetIndex() + 1) % DUOTONE_PRESETS.size
+            val p = DUOTONE_PRESETS[nextIndex]
+            preferences.applyDuotonePreset(p.lightColor, p.darkColor, true, nextIndex)
+        }
+
+        private fun addCurrentImageToFavorites() {
+            if (currentImageUri == null) return
+
+            scope.launch {
+                val result = favoritesRepository.saveFavorite(currentImageUri!!)
+                if (result.isSuccess) {
+                    val saved = result.getOrNull()!!
+                    Actions.broadcastFavoriteAdded(this@ShimmerWallpaperService, result = saved)
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(
+                            this@ShimmerWallpaperService,
+                            getString(R.string.toast_favorite_saved, saved.displayName),
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                } else {
+                    Log.w(TAG, "addCurrentImageToFavorites: failed for $currentImageUri", result.exceptionOrNull())
+                }
+            }
+        }
+
+        override fun onSurfaceCreated(h: SurfaceHolder) {
+            super.onSurfaceCreated(h)
+            rendererReady = false
+        }
+
+        override fun onSurfaceDestroyed(h: SurfaceHolder) {
+            rendererReady = false
+            renderer?.onSurfaceDestroyed()
+            super.onSurfaceDestroyed(h)
+        }
+
+        override fun onDestroy() {
+            touchEffectController.cleanup()
+            preferences.unregisterListener(preferenceListener)
+            try {
+                unregisterReceiver(shortcutReceiver)
+            } catch (_: Exception) {
+            }
+            try {
+                unregisterReceiver(screenUnlockReceiver)
+            } catch (_: Exception) {
+            }
+            cycleScheduler.stop()
+            scope.cancel()
+            blurTimeoutHandler.removeCallbacks(blurTimeoutRunnable)
+            super.onDestroy()
+            cachedImageSet?.recycleAll()
+        }
+    }
+}
