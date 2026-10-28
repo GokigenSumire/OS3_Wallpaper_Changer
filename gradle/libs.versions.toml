@@ -1,14 +1,14 @@
 [versions]
-compileSdk = "36"
-targetSdk = "36"
-minSdk = "26"
+compileSdk = "37"
+targetSdk = "37"
+minSdk = "31"
 appCompat = "1.7.1"
 composeBom = "2024.10.01"
-composeCompiler = "1.5.12"
 activityCompose = "1.9.3"
 lifecycleViewmodelCompose = "2.8.7"
-room = "2.6.1"
-ksp = "1.9.23-1.0.19"
+room = "2.7.2"
+ksp = "2.3.6"
+kotlin = "2.2.10"
 
 [libraries]
 appCompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appCompat" }
@@ -22,3 +22,5 @@ composeUiTestManifest = { group = "androidx.compose.ui", name = "ui-test-manifes
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+[plugins]
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

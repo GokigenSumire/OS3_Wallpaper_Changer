@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">OS3 Wallpaper P0</string>
+    <string name="p10_lock_wallpaper_name">Hyper Wallpaper Changer · 锁屏</string>
+    <string name="p10_lock_wallpaper_description">独立锁屏图库与播放。请仅应用到锁屏；桌面和锁屏共享目标不启用此服务。</string>
+    <string name="app_name">Hyper Wallpaper Changer</string>
+    <string name="app_name_p0">Hyper Wallpaper Changer · P0诊断</string>
+    <string name="app_name_p2">Hyper Wallpaper Changer</string>
+    <string name="p10_home_capability_name">P10 蓝色HOME能力标定（非图片壁纸）</string>
+    <string name="p10_lock_capability_name">P10 紫色LOCK能力标定（非图片壁纸）</string>
+    <string name="p10_capability_description">仅确认原生独立显示与触摸；手势只计数，不切图或编辑</string>
     <string name="wallpaper_description">P0 手势、编辑入口与生命周期诊断壁纸</string>
+    <string name="wallpaper_description_p2">图片播放、顺序、历史、编辑与手势壁纸</string>
     <string name="shortcut_next_image_short_label">Next Image</string>
     <string name="shortcut_next_image_long_label">Show the next wallpaper image</string>
     <string name="shortcut_random_duotone_short_label">Random Duotone</string>
@@ -9,4 +17,10 @@
     <string name="shortcut_add_to_favorites_short_label">Add to Favorites</string>
     <string name="shortcut_add_to_favorites_long_label">Save current wallpaper to favorites</string>
     <string name="toast_favorite_saved">Saved to favorites: %1$s</string>
+
+    <!-- P8 底栏导航 -->
+    <string name="nav_gallery">图库</string>
+    <string name="nav_playback">播放</string>
+    <string name="nav_effects">特效</string>
+    <string name="nav_settings">设置</string>
 </resources>

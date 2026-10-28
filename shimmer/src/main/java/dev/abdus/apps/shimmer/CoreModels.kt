@@ -73,6 +73,13 @@ data class ImageSet(
     val id: String = "",
     val width: Int = original.width,
     val height: Int = original.height,
+    /** Upright full-resolution size before sampling; drives P3 placement and re-decode checks. */
+    val sourceWidth: Int = width,
+    val sourceHeight: Int = height,
+    /** `inSampleSize` the foreground was decoded with. */
+    val sampleSize: Int = 1,
+    /** P3 blurred fill (≤ 96 px long edge); null when unavailable, then no fill is drawn. */
+    val background: Bitmap? = null,
 ) {
     val aspectRatio: Float = if (height == 0) 1f else width.toFloat() / height
 }
@@ -80,6 +87,7 @@ data class ImageSet(
 fun ImageSet.recycleAll() {
     if (!original.isRecycled) original.recycle()
     blurred.forEach { if (!it.isRecycled) it.recycle() }
+    background?.let { if (!it.isRecycled) it.recycle() }
 }
 
 /**

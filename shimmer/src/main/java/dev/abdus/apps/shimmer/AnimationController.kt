@@ -2,9 +2,14 @@ package dev.abdus.apps.shimmer
 
 import android.graphics.Color
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
 import androidx.core.graphics.createBitmap
 
-class AnimationController(private var durationMillis: Int = 1000) {
+class AnimationController(private var durationMillis: Int = DEFAULT_DURATION_MILLIS) {
+    companion object {
+        const val DEFAULT_DURATION_MILLIS = 1000
+    }
+
     var currentRenderState: RenderState
         private set
 
@@ -15,7 +20,8 @@ class AnimationController(private var durationMillis: Int = 1000) {
     val blurAmountAnimator = TickingFloatAnimator(durationMillis, DecelerateInterpolator())
     val dimAmountAnimator = TickingFloatAnimator(durationMillis, DecelerateInterpolator())
     val duotoneOpacityAnimator = TickingFloatAnimator(durationMillis, DecelerateInterpolator())
-    val imageTransitionAnimator = TickingFloatAnimator(durationMillis, DecelerateInterpolator())
+    // Linear progress; each P5 effect applies its own easing. Its duration is set per switch.
+    val imageTransitionAnimator = TickingFloatAnimator(durationMillis, LinearInterpolator())
 
     // Duotone color animators (manual interpolation within tick)
     private var currentDuotoneLightColor: Int = 0
@@ -61,7 +67,6 @@ class AnimationController(private var durationMillis: Int = 1000) {
         blurAmountAnimator.durationMillis = durationMillis
         dimAmountAnimator.durationMillis = durationMillis
         duotoneOpacityAnimator.durationMillis = durationMillis
-        imageTransitionAnimator.durationMillis = durationMillis
     }
 
     fun updateTargetState(newTarget: RenderState) {
@@ -145,6 +150,16 @@ class AnimationController(private var durationMillis: Int = 1000) {
             imageTransitionAnimator.start(startValue = 0f, endValue = 1f)
         }
 
+    }
+
+    /**
+     * Swaps the displayed image set without a crossfade (a P3 finer re-decode of the same image).
+     * Every other property and any running animation continues untouched.
+     */
+    fun replaceImageInPlace(imageSet: ImageSet) {
+        targetRenderState = targetRenderState.copy(imageSet = imageSet)
+        currentRenderState = currentRenderState.copy(imageSet = imageSet)
+        forceUpdateOneFrame = true
     }
 
     // Public methods to immediately set state (for initial preference load)

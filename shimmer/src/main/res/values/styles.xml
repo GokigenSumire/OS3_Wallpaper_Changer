@@ -1,9 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Theme.OS3.LockEdit" parent="Theme.OS3.P0">
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:windowShowWallpaper">false</item>
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowActionModeOverlay">true</item>
+    </style>
     <style name="Theme.OS3.P0" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowIsTranslucent">false</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">?android:colorBackground</item>
+    </style>
+    <!--
+        P3 editor: an opaque window whose transparent background shows the real wallpaper, the way
+        a launcher does. Opaque (not translucent) so the launcher stops and its icons are not drawn
+        over the image being edited.
+    -->
+    <style name="Theme.OS3.P3Edit" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackgroundCacheHint">@null</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:backgroundDimEnabled">false</item>
     </style>
     <style name="Theme.Shimmer.Transparent" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>

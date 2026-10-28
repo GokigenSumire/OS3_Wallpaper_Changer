@@ -48,8 +48,10 @@ class ShimmerProgram {
             out vec2 vPosition;
             void main() {
                 vTexCoords = aTexCoords;
-                vPosition = aPosition.xy;
                 gl_Position = uMVPMatrix * aPosition;
+                // Screen position in clip space, so touch effects stay under the finger even when
+                // the image is zoomed, rotated or mirrored.
+                vPosition = gl_Position.xy / gl_Position.w;
             }
         """.trimIndent()
 

@@ -1,41 +1,74 @@
 package dev.abdus.apps.shimmer
 
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.opengl.GLES30
+import dev.abdus.apps.shimmer.gl.FillProgram
 import dev.abdus.apps.shimmer.gl.ShaderHandles
 import dev.abdus.apps.shimmer.gl.QuadMesh
 import dev.abdus.apps.shimmer.gl.TextureArray
+import dev.abdus.apps.shimmer.gl.TextureLoader
+import dev.abdus.apps.shimmer.gl.ImageUploadIdentity
 import kotlin.math.ceil
 import kotlin.math.floor
 
 class ImageRenderer {
     private val textures = TextureArray()
-    private var loadedHash = 0
+    private val uploadIdentity = ImageUploadIdentity()
+    // P3 fill layer; owned and released together with the foreground textures (F04).
+    private var backgroundTexture = 0
+    private var backgroundSource: Bitmap? = null
 
     val aspectRatio: Float get() = textures.aspectRatio
     val isEmpty: Boolean get() = textures.isEmpty
     val textureCount: Int get() = textures.size
+    val hasBackground: Boolean get() = backgroundTexture != 0
 
     fun load(imageSet: ImageSet) {
-        val newHash = imageSet.hashCode()
-        if (loadedHash == newHash && !textures.isEmpty) return
-
         if (imageSet.original.isRecycled) return
+        if (uploadIdentity.canReuse(imageSet, imageSet.original, imageSet.blurred, imageSet.background, !textures.isEmpty)) return
+        uploadIdentity.clear()
 
         val bitmaps = listOf(imageSet.original) + imageSet.blurred
-        val newAspect = imageSet.width.toFloat() / imageSet.height
 
-        val needsRealloc = textures.isEmpty ||
-                kotlin.math.abs(textures.aspectRatio - newAspect) >= 0.001f ||
-                textures.size != bitmaps.size
-
-        if (needsRealloc) {
-            textures.allocate(bitmaps)
-        } else {
+        // A same-aspect image of a different size (e.g. a finer P3 re-decode) cannot reuse the
+        // immutable storage, so reallocation is keyed on exact sizes rather than aspect ratio.
+        if (textures.fits(bitmaps)) {
             textures.upload(bitmaps)
+        } else {
+            textures.allocate(bitmaps)
         }
+        loadBackground(imageSet.background)
 
-        loadedHash = newHash
+        uploadIdentity.record(imageSet, imageSet.original, imageSet.blurred, imageSet.background)
+    }
+
+    private fun loadBackground(bitmap: Bitmap?) {
+        if (bitmap === backgroundSource && backgroundTexture != 0) return
+        releaseBackground()
+        if (bitmap == null || bitmap.isRecycled) return
+        backgroundTexture = TextureLoader.load(bitmap)
+        backgroundSource = bitmap
+    }
+
+    private fun releaseBackground() {
+        if (backgroundTexture != 0) {
+            GLES30.glDeleteTextures(1, intArrayOf(backgroundTexture), 0)
+            backgroundTexture = 0
+        }
+        backgroundSource = null
+    }
+
+    /** Draws the P3 blurred fill; a no-op when the image set carried no background. */
+    fun drawBackground(
+        fill: FillProgram,
+        mvpMatrix: FloatArray,
+        clipToQuad: FloatArray?,
+        dimAmount: Float,
+        alpha: Float,
+    ) {
+        if (backgroundTexture == 0 || alpha <= 0f) return
+        fill.draw(backgroundTexture, mvpMatrix, clipToQuad, dimAmount, alpha)
     }
 
     fun draw(
@@ -110,5 +143,9 @@ class ImageRenderer {
         GLES30.glUniform1f(h.uniformAlpha, alpha)
     }
 
-    fun release() = textures.release()
+    fun release() {
+        textures.release()
+        releaseBackground()
+        uploadIdentity.clear()
+    }
 }

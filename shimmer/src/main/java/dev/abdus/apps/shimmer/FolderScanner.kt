@@ -7,7 +7,14 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import dev.abdus.apps.shimmer.p1.P1AndroidSourceScanner
+import dev.abdus.apps.shimmer.p1.P1ScanFailure
+import dev.abdus.apps.shimmer.p1.P1ScanOutcome
+import dev.abdus.apps.shimmer.p1.P1ScanProgress
+import dev.abdus.apps.shimmer.p1.P1SourceKind
+import dev.abdus.apps.shimmer.p1.P1SourceSpec
 import java.io.File
+import java.util.concurrent.CancellationException
 
 data class ScannedImage(
     val uri: Uri,
@@ -175,12 +182,21 @@ class FolderScanner(context: Context) {
     private val fileScanner = FileScanner()
     private val documentScanner = DocumentScanner(context)
     private val mediaStoreScanner = MediaStoreScanner(context)
+    private val p1Scanner = P1AndroidSourceScanner(context)
+    private val context = context.applicationContext
 
     fun scan(
         uri: Uri,
         existingFiles: Map<Uri, Long?>? = null,
         checkActive: () -> Unit = {},
+        includeSubdirectories: Boolean = true,
+        onProgress: (P1ScanProgress) -> Unit = {},
     ): ScanResult<ScannedImage> {
+        // The P1 tree adapter is for real file/SAF sources. App-owned virtual collections
+        // (for example the Shared destination) keep their existing scanner behavior.
+        if (!FavoritesFolderResolver.isDefaultFavoritesUri(uri) && uri.scheme in setOf("file", "content")) {
+            return scanRecursively(uri, existingFiles, checkActive, includeSubdirectories, onProgress)
+        }
         return captureScan(checkActive) {
             val scanner = when {
                 FavoritesFolderResolver.isDefaultFavoritesUri(uri) -> mediaStoreScanner
@@ -189,5 +205,64 @@ class FolderScanner(context: Context) {
             }
             scanner.scan(uri, existingFiles, checkActive)
         }
+    }
+
+    private fun scanRecursively(
+        uri: Uri,
+        existingFiles: Map<Uri, Long?>?,
+        checkActive: () -> Unit,
+        includeSubdirectories: Boolean,
+        onProgress: (P1ScanProgress) -> Unit,
+    ): ScanResult<ScannedImage> {
+        val source = P1SourceSpec(
+            sourceId = uri.toString(),
+            rootUri = uri.toString(),
+            kind = if (uri.scheme == "file") P1SourceKind.DIRECTORY_TREE else {
+                runCatching { DocumentsContract.isTreeUri(uri) }
+                    .getOrDefault(false)
+                    .let { isTree -> if (isTree) P1SourceKind.DIRECTORY_TREE else P1SourceKind.SINGLE_DOCUMENT }
+            },
+            includeSubdirectories = includeSubdirectories,
+        )
+        return captureScan(checkActive) {
+            when (val outcome = p1Scanner.scan(source, checkActive, onProgress)) {
+                is P1ScanOutcome.Complete -> outcome.images.map { image ->
+                    checkActive()
+                    val imageUri = Uri.parse(image.uri)
+                    val existingSize = existingFiles?.get(imageUri)
+                    val unchanged = existingFiles?.containsKey(imageUri) == true && existingSize == image.sizeBytes
+                    if (unchanged) {
+                        ScannedImage(imageUri, null, null, image.sizeBytes)
+                    } else {
+                        val dimensions = decodeBounds(imageUri)
+                        ScannedImage(imageUri, dimensions.first, dimensions.second, image.sizeBytes)
+                    }
+                }
+                is P1ScanOutcome.Cancelled -> throw CancellationException("P1 scan cancelled")
+                is P1ScanOutcome.Failed -> throw ScanException(outcome.reason.toScanFailure())
+            }
+        }
+    }
+
+    private fun decodeBounds(uri: Uri): Pair<Int, Int> {
+        val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        if (uri.scheme == "file") {
+            BitmapFactory.decodeFile(uri.path, options)
+        } else {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, options)
+            } ?: throw ScanException(ScanFailure.METADATA_DECODE)
+        }
+        if (options.outWidth <= 0 || options.outHeight <= 0) {
+            throw ScanException(ScanFailure.METADATA_DECODE)
+        }
+        return options.outWidth to options.outHeight
+    }
+
+    private fun P1ScanFailure.toScanFailure(): ScanFailure = when (this) {
+        P1ScanFailure.READ -> ScanFailure.READ
+        P1ScanFailure.PERMISSION -> ScanFailure.PERMISSION
+        P1ScanFailure.INCOMPLETE_RESULT -> ScanFailure.INCOMPLETE_RESULT
+        P1ScanFailure.METADATA -> ScanFailure.METADATA_DECODE
     }
 }

@@ -72,6 +72,7 @@ import dev.abdus.apps.shimmer.FavoritesFolderResolver
 import dev.abdus.apps.shimmer.ImageFolderRepository
 import dev.abdus.apps.shimmer.SharedFolderResolver
 import dev.abdus.apps.shimmer.WallpaperPreferences
+import dev.abdus.apps.shimmer.p1.P1SourceRepository
 import dev.abdus.apps.shimmer.ui.ShimmerTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -112,13 +113,15 @@ class FolderSelectionActivity : ComponentActivity() {
         val prefs = WallpaperPreferences.create(this)
         val scope = lifecycleScope // Use lifecycleScope from Activity
         val repo = ImageFolderRepository(this, scope)
-        val viewModel = FolderSelectionViewModel(repo, prefs)
+        val p1SourceRepository = P1SourceRepository(this)
+        val viewModel = FolderSelectionViewModel(repo, p1SourceRepository, prefs)
 
         setContent {
             ShimmerTheme {
                 val uiState by viewModel.uiState.collectAsState()
                 val scope = rememberCoroutineScope()
                 val folderPicker = rememberFolderPicker()
+                val imagePicker = rememberImagePicker()
 
                 FolderSelectionScreen(
                     state = uiState,
@@ -128,6 +131,12 @@ class FolderSelectionActivity : ComponentActivity() {
                     },
                     onAddFolderClick = {
                         scope.launch { folderPicker.pick()?.let { uri -> viewModel.addFolder(uri) } }
+                    },
+                    onAddSingleImageClick = {
+                        scope.launch { imagePicker.pickSingle().takeIf { it.isNotEmpty() }?.let(viewModel::importImages) }
+                    },
+                    onAddMultipleImagesClick = {
+                        scope.launch { imagePicker.pickMultiple().takeIf { it.isNotEmpty() }?.let(viewModel::importImages) }
                     },
                     onPickFavoritesClick = {
                         scope.launch { folderPicker.pick()?.let { uri -> viewModel.updateFavoritesUri(uri) } }
@@ -150,6 +159,7 @@ class FolderSelectionActivity : ComponentActivity() {
 
 class FolderSelectionViewModel(
     private val repository: ImageFolderRepository,
+    private val p1SourceRepository: P1SourceRepository,
     private val preferences: WallpaperPreferences,
 ) : ViewModel() {
 
@@ -236,7 +246,35 @@ class FolderSelectionViewModel(
 
     fun addFolder(uri: Uri) {
         viewModelScope.launch {
+            // P1 owns the durable source graph. The legacy index remains populated during the
+            // migration window so existing wallpaper selection continues to work.
+            try {
+                p1SourceRepository.importDirectory(uri)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Legacy import still runs; the P1 source state records the failure when possible.
+            }
             repository.addFolder(uri)
+        }
+    }
+
+    fun importImages(uris: List<Uri>) {
+        viewModelScope.launch {
+            try {
+                if (uris.size == 1) {
+                    p1SourceRepository.importSingleDocument(uris.single())
+                } else {
+                    p1SourceRepository.importSelectedDocuments(uris)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Preserve the legacy path if a provider cannot be persisted in this pass.
+            }
+            repository.registerSpecialFolders()
+            val sharedUri = SharedFolderResolver.getEffectiveSharedUri(preferences)
+            uris.distinct().forEach { repository.addSingleImageToFolder(sharedUri, it) }
         }
     }
 
@@ -256,6 +294,8 @@ fun FolderSelectionScreen(
     onBackClick: () -> Unit,
     onFolderClick: (Long, String) -> Unit,
     onAddFolderClick: () -> Unit,
+    onAddSingleImageClick: () -> Unit,
+    onAddMultipleImagesClick: () -> Unit,
     onPickFavoritesClick: () -> Unit,
     onPickSharedClick: () -> Unit,
     onToggleFolder: (Uri, Boolean) -> Unit,
@@ -387,13 +427,17 @@ fun FolderSelectionScreen(
                     description = "Select folders containing images",
                     iconVector = Icons.Default.Folder,
                     actionSlot = {
-                        Button(onClick = onAddFolderClick) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text("Add")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = onAddSingleImageClick) { Text("Image") }
+                            Button(onClick = onAddMultipleImagesClick) { Text("Images") }
+                            Button(onClick = onAddFolderClick) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = null,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("Folder")
+                            }
                         }
                     },
                 )

@@ -13,6 +13,7 @@ gen/
 out/
 build/
 .gradle/
+.kotlin/
 .ART
 # Project files
 *.iml

@@ -1,21 +1,34 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
-    id 'org.jetbrains.kotlin.plugin.serialization' version '1.9.23'
+    id 'org.jetbrains.kotlin.plugin.serialization' version '2.2.10'
     id 'com.google.devtools.ksp'
+    alias(libs.plugins.kotlin.compose)
 }
 
 android {
     namespace 'dev.abdus.apps.shimmer'
     compileSdk libs.versions.compileSdk.get().toInteger()
-    buildToolsVersion '35.0.0'
+
+    // CHG-P9-SDK37-20261005 的连带处理：compileSdk 37 起 AGP 默认以 Stored 方式打包 dex（不压缩），
+    // 本应用的 APK 因此从 22 MB 涨到 69 MB，超出 P9 计划冻结的 Y6 阈值（增量 ≤ 8 MB）。
+    // 用户 2026-10-06 选择恢复压缩：体积拉回 ~25 MB，代价是安装时需解压、安装略慢。
+    packaging {
+        dex {
+            useLegacyPackaging = true
+        }
+    }
+    // AGP 9.4.1 requires at least 36.0.0; pin its default to the installed revision.
+    // CHG-P9-SDK37-20261005：随 compileSdk 37 一同升级
+    buildToolsVersion '37.0.0'
 
     defaultConfig {
         applicationId "personal.wallpaper.os3"
         minSdkVersion libs.versions.minSdk.get().toInteger()
         targetSdkVersion libs.versions.targetSdk.get().toInteger()
-        versionCode 1
-        versionName '0.0.1-p0'
+        versionCode 94
+        versionName '1.2.6-p10-input-priority'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
     // Load keystore properties from keystore.properties file if it exists
@@ -41,13 +54,16 @@ android {
 
     buildTypes {
         release {
+            debuggable false
             minifyEnabled false
+            buildConfigField 'String', 'COMPAT_MODULE_APPLICATION_ID', '"personal.wallpaper.os4.e1"'
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (keystorePath) {
                 signingConfig signingConfigs.release
             }
         }
         debug {
+            buildConfigField 'String', 'COMPAT_MODULE_APPLICATION_ID', '"personal.wallpaper.os4.e1.debug"'
             applicationIdSuffix '.debug'
             versionNameSuffix '-debug'
             // The standard local Android debug key is never replaced with the release key.
@@ -68,16 +84,32 @@ android {
         buildConfig true
     }
 
-    composeOptions {
-        kotlinCompilerExtensionVersion libs.versions.composeCompiler.get()
+    testOptions {
+        unitTests.includeAndroidResources = true
+    }
+}
+
+ksp {
+    arg('room.schemaLocation', file('schemas').path)
+}
+
+androidComponents {
+    beforeVariants(selector().withBuildType('release')) { variant ->
+        variant.enableUnitTest = true
     }
 }
 
 dependencies {
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+    testImplementation 'androidx.test:core:1.6.1'
+    testImplementation 'androidx.room:room-testing:2.7.2'
     implementation libs.appCompat
     implementation platform(libs.composeBom)
     androidTestImplementation platform(libs.composeBom)
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.room:room-testing:2.7.2'
     implementation libs.androidxActivityCompose
     implementation libs.androidxLifecycleViewmodelCompose
     implementation libs.composeMaterial3

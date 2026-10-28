@@ -27,6 +27,8 @@ open class GLWallpaperService : WallpaperService() {
         fun onSurfaceCreated()
         fun onSurfaceChanged(width: Int, height: Int)
         fun onDrawFrame()
+        /** Called on the render thread right after the frame drawn by [onDrawFrame] was swapped. */
+        fun onFramePresented() {}
         /** Release GL objects; only called on the render thread with their context current. */
         fun onSurfaceDestroyed() {}
         /** Forget stale object names only. MUST NOT call GL, including glDelete*. */
@@ -439,6 +441,7 @@ private class GLThread(
         renderer.onDrawFrame()
         checkGl("draw")
         egl.swap()
+        renderer.onFramePresented()
         if (newSurface || work.rebuildContext || work.rebuildSurface) {
             emit("gl_presented", renderer.resourceSummary())
         }

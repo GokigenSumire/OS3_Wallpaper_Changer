@@ -24,7 +24,9 @@ class TickingFloatAnimator(
     private var endValue: Float = 0f
     private var onEnd: () -> Unit = {}
 
-    private var startTime: Long = 0
+    /** `elapsedRealtime` of the last [start]. */
+    var startTime: Long = 0
+        private set
     var currentValue: Float = 0f
     var isRunning = false
         private set

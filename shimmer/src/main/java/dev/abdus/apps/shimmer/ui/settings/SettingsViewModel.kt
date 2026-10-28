@@ -1,212 +1,129 @@
 package dev.abdus.apps.shimmer.ui.settings
 
 import android.app.Application
-import android.content.Intent
-import android.content.SharedPreferences
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import dev.abdus.apps.shimmer.Actions
-import dev.abdus.apps.shimmer.ChromaticAberrationSettings
-import dev.abdus.apps.shimmer.DuotoneSettings
-import dev.abdus.apps.shimmer.GestureSettings
-import dev.abdus.apps.shimmer.GrainSettings
-import dev.abdus.apps.shimmer.ImageCycleSettings
-import dev.abdus.apps.shimmer.ImageFolderRepository
 import dev.abdus.apps.shimmer.WallpaperPreferences
+import dev.abdus.apps.shimmer.p4.ScheduleStore
+import dev.abdus.apps.shimmer.ui.theme.AppearanceSettings
+import dev.abdus.apps.shimmer.ui.theme.AppearanceSettingsStore
+import dev.abdus.apps.shimmer.ui.theme.ThemeMode
+import dev.abdus.apps.shimmer.ui.theme.ThemeModeStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-data class SettingsUiState(
-    val selectedTab: SettingsTab,
-    val blurAmount: Float,
-    val dimAmount: Float,
-    val grainSettings: GrainSettings,
-    val duotoneSettings: DuotoneSettings,
-    val chromaticAberration: ChromaticAberrationSettings,
-    val imageCycleSettings: ImageCycleSettings,
-    val effectTransitionDurationMillis: Long,
-    val blurOnScreenLock: Boolean,
-    val blurTimeoutEnabled: Boolean,
-    val blurTimeoutMillis: Long,
-    val currentWallpaperUri: Uri? = null,
-    val currentWallpaperName: String? = null,
-    val imageFolders: List<ImageFolderUiModel> = emptyList(),
-    val gestureSettings: GestureSettings,
-) {
-    companion object {
-        fun fromPreferences(preferences: WallpaperPreferences) = SettingsUiState(
-            selectedTab = SettingsTab.entries.getOrElse(preferences.getLastSelectedTab()) { SettingsTab.SOURCES },
-            blurAmount = preferences.getBlurAmount(),
-            dimAmount = preferences.getDimAmount(),
-            grainSettings = preferences.getGrainSettings(),
-            duotoneSettings = preferences.getDuotoneSettings(),
-            chromaticAberration = preferences.getChromaticAberrationSettings(),
-            imageCycleSettings = preferences.getImageCycleSettings(),
-            effectTransitionDurationMillis = preferences.getEffectTransitionDurationMillis(),
-            blurOnScreenLock = preferences.isBlurOnScreenLockEnabled(),
-            blurTimeoutEnabled = preferences.isBlurTimeoutEnabled(),
-            blurTimeoutMillis = preferences.getBlurTimeoutMillis(),
-            gestureSettings = preferences.getGestureSettings(),
-        )
-    }
+/**
+ * P8.6 设置页面 ViewModel
+ * 连接 P4 调度设置和应用配置；间隔数值与单位只在 P4 调度页修改
+ */
+class P8SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
-    val sources: SourcesState
-        get() = SourcesState(
-            currentWallpaperUri = currentWallpaperUri,
-            currentWallpaperName = currentWallpaperName,
-            imageFolders = imageFolders,
-            imageCycleSettings = imageCycleSettings,
-        )
-
-    val effects: EffectsState
-        get() = EffectsState(
-            blurAmount = blurAmount,
-            dimAmount = dimAmount,
-            grainSettings = grainSettings,
-            duotone = duotoneSettings,
-            chromaticAberration = chromaticAberration,
-            effectTransitionDurationMillis = effectTransitionDurationMillis,
-            blurOnScreenLock = blurOnScreenLock,
-            blurTimeoutEnabled = blurTimeoutEnabled,
-            blurTimeoutMillis = blurTimeoutMillis,
-        )
-
-    val gestures: GesturesState
-        get() = GesturesState(
-            settings = gestureSettings
-        )
-}
-
-class SettingsViewModel(application: Application) : AndroidViewModel(application) {
-
-    private val repository = ImageFolderRepository(application, viewModelScope)
     private val preferences = WallpaperPreferences.create(application)
+    private val scheduleStore = ScheduleStore(application)
+    private val themeStore = ThemeModeStore(application)
+    private val appearanceStore = AppearanceSettingsStore(application)
 
-    private val _uiState = MutableStateFlow(SettingsUiState.fromPreferences(preferences))
+    private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
-    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        updateStateFromPrefs(key)
-    }
-
-    init {
-        preferences.registerListener(prefsListener)
-        observeRepository()
-    }
-
-    fun handleSettingsAction(action: SettingsAction) {
-        when (action) {
-            is SettingsAction.TabSelected -> preferences.setLastSelectedTab(action.tab.ordinal)
-        }
-    }
-
-    fun handleSourcesAction(action: SourcesAction) {
-        when (action) {
-            SourcesAction.ViewCurrentWallpaper -> viewCurrentWallpaper()
-            is SourcesAction.NavigateToFolderDetail -> navigateToFolderDetail(action.folderId, action.folderName)
-            SourcesAction.NavigateToFolderSelection -> navigateToFolderSelection()
-            is SourcesAction.UpdateImageCycle -> preferences.setImageCycleSettings(action.settings)
-        }
-    }
-
-    fun handleEffectsAction(action: EffectsAction) {
-        when (action) {
-            is EffectsAction.SetBlurAmount -> preferences.setBlurAmount(action.amount)
-            is EffectsAction.SetDimAmount -> preferences.setDimAmount(action.amount)
-            is EffectsAction.SetEffectTransitionDuration -> preferences.setEffectTransitionDurationMillis(action.durationMillis)
-            is EffectsAction.UpdateDuotone -> preferences.setDuotoneSettings(action.settings)
-            is EffectsAction.UpdateGrain -> preferences.setGrainSettings(action.settings)
-            is EffectsAction.UpdateChromaticAberration -> preferences.setChromaticAberrationSettings(action.settings)
-            is EffectsAction.SetBlurOnScreenLock -> preferences.setBlurOnScreenLock(action.enabled)
-            is EffectsAction.SetBlurTimeoutEnabled -> preferences.setBlurTimeoutEnabled(action.enabled)
-            is EffectsAction.SetBlurTimeoutMillis -> preferences.setBlurTimeoutMillis(action.millis)
-        }
-    }
-
-    fun handleGesturesAction(action: GesturesAction) {
-        when (action) {
-            is GesturesAction.SetGestureAction -> preferences.setGestureAction(action.event, action.action)
-        }
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        preferences.unregisterListener(prefsListener)
-    }
-
-    private fun observeRepository() {
+    /** Re-reads the stores; the screen calls this on every resume (P2, P3 and P4 pages write them too). */
+    fun refresh() {
         viewModelScope.launch {
-            repository.foldersMetadataFlow.collect { metadata ->
-                val folders = metadata.map { (uri, meta) ->
-                    ImageFolderUiModel(
-                        id = meta.folderId,
-                        uri = uri,
-                        displayName = repository.getFolderDisplayName(uri),
-                        displayPath = repository.formatTreeUriPath(uri),
-                        thumbnailUri = meta.thumbnailUri,
-                        imageCount = meta.imageCount,
-                        enabled = meta.isEnabled,
-                        isLocal = meta.isLocal,
-                        isScanning = meta.isScanning,
-                    )
-                }
-                _uiState.update { it.copy(imageFolders = folders) }
-            }
-        }
+            // 加载 P4 调度设置
+            val scheduleSettings = scheduleStore.loadSettings()
 
+            _uiState.value = _uiState.value.copy(
+                intervalEnabled = scheduleSettings.interval.enabled,
+                intervalLabel = ScheduleSummary.intervalLabel(scheduleSettings.interval),
+                unlockEnabled = scheduleSettings.onUnlock,
+                staticAcceptanceEnabled = preferences.isP2StaticTestMode(),
+                appearance = appearanceStore.load(),
+                themeMode = themeStore.load(),
+                isLoading = false
+            )
+        }
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        if (mode == _uiState.value.themeMode) return
+        _uiState.value = _uiState.value.copy(themeMode = mode)
+        // 主界面监听这个存储立即重组；Android 12+ 旧页面经系统的应用级夜间模式切换
+        themeStore.save(mode)
+        ThemeModeStore.applyToLegacyPages(getApplication(), mode)
+    }
+
+    fun toggleInterval(enabled: Boolean) {
         viewModelScope.launch {
-            repository.currentImageUriFlow.collect { uri ->
-                val name = repository.getCurrentImageName(uri)
-                _uiState.update {
-                    it.copy(
-                        currentWallpaperUri = uri,
-                        currentWallpaperName = name,
-                    )
-                }
-            }
+            _uiState.value = _uiState.value.copy(intervalEnabled = enabled)
+
+            val settings = scheduleStore.loadSettings()
+            val updated = settings.copy(
+                interval = settings.interval.copy(enabled = enabled)
+            )
+            scheduleStore.saveSettings(updated)
         }
     }
 
-    private fun updateStateFromPrefs(key: String?) {
-        if (key == null) return
-        _uiState.update { current ->
-            when (key) {
-                WallpaperPreferences.KEY_BLUR_AMOUNT -> current.copy(blurAmount = preferences.getBlurAmount())
-                WallpaperPreferences.KEY_DIM_AMOUNT -> current.copy(dimAmount = preferences.getDimAmount())
-                WallpaperPreferences.KEY_GRAIN_SETTINGS -> current.copy(grainSettings = preferences.getGrainSettings())
-                WallpaperPreferences.KEY_DUOTONE_SETTINGS -> current.copy(duotoneSettings = preferences.getDuotoneSettings())
-                WallpaperPreferences.KEY_CHROMATIC_ABERRATION_SETTINGS -> current.copy(chromaticAberration = preferences.getChromaticAberrationSettings())
-                WallpaperPreferences.KEY_IMAGE_CYCLE_SETTINGS -> current.copy(imageCycleSettings = preferences.getImageCycleSettings())
-                WallpaperPreferences.KEY_EFFECT_TRANSITION_DURATION -> current.copy(effectTransitionDurationMillis = preferences.getEffectTransitionDurationMillis())
-                WallpaperPreferences.KEY_BLUR_ON_SCREEN_LOCK -> current.copy(blurOnScreenLock = preferences.isBlurOnScreenLockEnabled())
-                WallpaperPreferences.KEY_BLUR_TIMEOUT_ENABLED -> current.copy(blurTimeoutEnabled = preferences.isBlurTimeoutEnabled())
-                WallpaperPreferences.KEY_BLUR_TIMEOUT_MILLIS -> current.copy(blurTimeoutMillis = preferences.getBlurTimeoutMillis())
-                WallpaperPreferences.KEY_GESTURE_SETTINGS -> current.copy(gestureSettings = preferences.getGestureSettings())
-                WallpaperPreferences.KEY_LAST_SELECTED_TAB -> current.copy(selectedTab = SettingsTab.entries.getOrElse(preferences.getLastSelectedTab()) { SettingsTab.SOURCES })
-                else -> current
-            }
+    fun toggleUnlock(enabled: Boolean) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(unlockEnabled = enabled)
+
+            val settings = scheduleStore.loadSettings()
+            val updated = settings.copy(onUnlock = enabled)
+            scheduleStore.saveSettings(updated)
         }
     }
 
-    fun viewCurrentWallpaper() {
-        uiState.value.currentWallpaperUri?.let { uri ->
-            Actions.viewImage(getApplication(), uri)
+    // --- P9-GLASS-01～03 外观设置 -----------------------------------------------------------
+    // 四个入口都走同一份存储；MainActivity 监听该存储并立即重绘，所以不需要在这里通知界面。
+
+    fun setScrimAlpha(value: Float) = updateAppearance { it.copy(scrimAlpha = value) }
+
+    fun setCardAlpha(value: Float) = updateAppearance { it.copy(cardAlpha = value) }
+
+    fun setBottomBarAlpha(value: Float) = updateAppearance { it.copy(bottomBarAlpha = value) }
+
+    fun toggleFloatingBottomBar(enabled: Boolean) =
+        updateAppearance { it.copy(floatingBottomBarEnabled = enabled) }
+
+    /** 读改写一份设置；越界值由存储层的 normalized 夹取。 */
+    private fun updateAppearance(transform: (AppearanceSettings) -> AppearanceSettings) {
+        viewModelScope.launch {
+            val updated = transform(appearanceStore.load()).normalized()
+            appearanceStore.save(updated)
+            _uiState.value = _uiState.value.copy(appearance = updated)
         }
     }
 
-    fun navigateToFolderDetail(folderId: Long, folderName: String) {
-        val intent = FolderDetailActivity.createIntent(getApplication(), folderId, folderName)
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        getApplication<Application>().startActivity(intent)
+    fun toggleStaticAcceptance(enabled: Boolean) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(staticAcceptanceEnabled = enabled)
+            // P9-STATIC-SHIMMER-01：版本 39 这里只翻转标志，首次安装设备关闭后上游特效全部显露。
+            // 关闭时与旧 P2 页走同一个函数，先清零特效再翻转标志。
+            if (enabled) preferences.setP2StaticTestMode(true) else preferences.exitStaticTestMode()
+        }
     }
 
-    fun navigateToFolderSelection() {
-        val intent = Intent(getApplication(), FolderSelectionActivity::class.java)
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        getApplication<Application>().startActivity(intent)
+    fun messageShown() {
+        _uiState.value = _uiState.value.copy(message = null)
     }
 }
+
+/**
+ * 设置页面 UI 状态
+ */
+data class SettingsUiState(
+    // 调度三项随 P9-SETTINGS-02 迁到特效页，这里保留是因为 toggleInterval/toggleUnlock 仍可被
+    // 旧入口调用；设置页本身不再渲染它们。
+    val intervalEnabled: Boolean = false,
+    val intervalLabel: String = "",
+    val unlockEnabled: Boolean = false,
+    val staticAcceptanceEnabled: Boolean = false,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    /** 三项透明度与悬浮底栏开关。 */
+    val appearance: AppearanceSettings = AppearanceSettings(),
+    val message: String? = null,
+    val isLoading: Boolean = true
+)

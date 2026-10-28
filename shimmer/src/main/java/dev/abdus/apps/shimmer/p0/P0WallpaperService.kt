@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
@@ -21,6 +22,9 @@ import java.util.concurrent.atomic.AtomicReference
 
 /** P0 isolates diagnostic state from upstream playback, Room, timers and preview side effects. */
 class P0WallpaperService : GLWallpaperService() {
+    // Kotlin disallows a nested class declaration inside an inner Engine class.
+    private data class PendingUpload(val image: ImageSet, val generation: Int)
+
     private val main = Handler(Looper.getMainLooper())
     private val screenSignal = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -31,9 +35,10 @@ class P0WallpaperService : GLWallpaperService() {
                 else -> return
             }
             // One service receiver, not one submission per Engine. These are observations only.
-            P0Diagnostics.screen(context, "SERVICE", signal, null)
+            val diagnosticToken = P0Diagnostics.captureToken()
+            P0Diagnostics.screen(context, "SERVICE", signal, null, diagnosticToken)
             for (delay in listOf(100L, 500L)) main.postDelayed({
-                P0Diagnostics.screen(context, "SERVICE", "${signal}_AFTER_${delay}MS", null)
+                P0Diagnostics.screen(context, "SERVICE", "${signal}_AFTER_${delay}MS", null, diagnosticToken)
             }, delay)
         }
     }
@@ -62,6 +67,13 @@ class P0WallpaperService : GLWallpaperService() {
         private var visible = false
         private var destroyed = false
         private var surfaceGeneration = 0
+        @Volatile private var diagnosticSurfaceEpoch = 0
+        private var diagnosticVisible: Boolean? = null
+        private var diagnosticTouchRequested: Boolean? = null
+        private var diagnosticSurfaceValid: Boolean? = null
+        private var diagnosticWidth: Int? = null
+        private var diagnosticHeight: Int? = null
+        private var diagnosticRendererReady = false
         @Volatile private var loadGeneration = 0
         private var fixture: ImageSet? = null // Main-thread receipt of completed GL upload, not just queue acceptance.
         private val ownedImages = mutableSetOf<ImageSet>() // Main thread; covers every accepted, unconsumed payload.
@@ -69,16 +81,28 @@ class P0WallpaperService : GLWallpaperService() {
         /** Atomic hand-off: the main thread may replace a queued image while GL is taking it. */
         private val pendingUpload = AtomicReference<PendingUpload?>(null)
         private var uploadQueued = false
-        private data class PendingUpload(val image: ImageSet, val generation: Int)
         private val loader = Executors.newSingleThreadExecutor()
         private lateinit var renderer: ShimmerRenderer
         private lateinit var gestures: P0GestureDetector
+
+        private fun diagnosticState(source: String = "OWNER_CACHE") = EngineDiagnosticState(
+            scope = scopeId, serviceType = "P0_PROBE", isPreview = isPreview,
+            alive = !destroyed, touchRequested = diagnosticTouchRequested, visible = diagnosticVisible,
+            surfaceValid = diagnosticSurfaceValid, width = diagnosticWidth, height = diagnosticHeight,
+            rendererReady = diagnosticRendererReady, editHold = false, source = source,
+        )
+
+        private fun publishDiagnosticState(source: String) {
+            if (!destroyed) P0Diagnostics.updateEngineState(diagnosticState(source))
+        }
 
         override fun diagnosticEvent(event: String, details: String) = P0Diagnostics.event(scopeId, event, details)
 
         override fun onCreate(holder: SurfaceHolder) {
             super.onCreate(holder)
             scopeId = "$instance/${if (isPreview) "PREVIEW" else "FORMAL"}"
+            diagnosticVisible = isVisible
+            P0Diagnostics.registerEngine(diagnosticState("OWNER_CREATE"))
             gestures = P0GestureDetector(this@P0WallpaperService) { kind ->
                 if (P0Diagnostics.enabled && !destroyed && visible) {
                     P0Diagnostics.gesture(scopeId, kind)
@@ -92,6 +116,8 @@ class P0WallpaperService : GLWallpaperService() {
             setRenderer(renderer)
             setRenderMode(RENDERMODE_WHEN_DIRTY)
             setTouchEventsEnabled(true)
+            diagnosticTouchRequested = true
+            publishDiagnosticState("OWNER_TOUCH_REQUEST")
             setOffsetNotificationsEnabled(true)
             P0Controls.add(P0Controls.EngineControl(scopeId,
                 rebuild = { contextToo -> requestP0Rebuild(contextToo) }, reload = { reloadFixture() }))
@@ -177,6 +203,16 @@ class P0WallpaperService : GLWallpaperService() {
 
         override fun onRendererReady() {
             P0Diagnostics.event(scopeId, "RENDERER_READY")
+            val token = P0Diagnostics.captureToken()
+            val generation = diagnosticSurfaceEpoch
+            main.post {
+                if (!destroyed && generation == diagnosticSurfaceEpoch) {
+                    diagnosticRendererReady = true
+                    val state = diagnosticState("OWNER_RENDERER_READY")
+                    P0Diagnostics.updateEngineCache(state)
+                    P0Diagnostics.updateEngineState(state, token)
+                }
+            }
             // Existing renderer restores the last CPU image itself; queued initial upload runs next.
         }
         override fun onReadyForNextImage() = Unit
@@ -185,26 +221,49 @@ class P0WallpaperService : GLWallpaperService() {
         }
 
         override fun onTouchEvent(event: MotionEvent) {
-            P0Diagnostics.rawTouch(scopeId, event)
-            if (P0Diagnostics.enabled && visible) gestures.onTouchEvent(event) else gestures.reset()
+            val touch = P0Diagnostics.beginTouch(scopeId, event, editHold = false)
+            if (P0Diagnostics.enabled && visible) {
+                gestures.onTouchEvent(event)
+                P0Diagnostics.touchForwarded(touch, "P0_GESTURE")
+            } else {
+                P0Diagnostics.touchIgnored(touch, if (visible) "DIAGNOSTICS_DISABLED" else "NOT_VISIBLE")
+                gestures.reset()
+            }
             super.onTouchEvent(event)
+        }
+
+        override fun onCommand(
+            action: String?, x: Int, y: Int, z: Int, extras: Bundle?, resultRequested: Boolean,
+        ): Bundle? {
+            P0Diagnostics.command(scopeId, action, x, y, z, resultRequested)
+            return super.onCommand(action, x, y, z, extras, resultRequested)
         }
 
         override fun onVisibilityChanged(visible: Boolean) {
             this.visible = visible
+            diagnosticVisible = visible
             if (::gestures.isInitialized && !visible) gestures.reset()
             super.onVisibilityChanged(visible)
+            publishDiagnosticState("OWNER_VISIBILITY")
             P0Diagnostics.screen(this@P0WallpaperService, scopeId, "VISIBILITY", visible)
         }
 
         override fun onSurfaceCreated(holder: SurfaceHolder) {
             surfaceGeneration++
+            diagnosticSurfaceEpoch++
+            diagnosticRendererReady = false
+            diagnosticSurfaceValid = holder.surface.isValid
+            publishDiagnosticState("OWNER_SURFACE_CREATE")
             P0Diagnostics.event(scopeId, "ANDROID_SURFACE_CREATE", "generation=$surfaceGeneration valid=${holder.surface.isValid}")
             super.onSurfaceCreated(holder)
         }
 
         override fun onSurfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
             super.onSurfaceChanged(holder, format, width, height)
+            diagnosticSurfaceValid = holder.surface.isValid
+            diagnosticWidth = width
+            diagnosticHeight = height
+            publishDiagnosticState("OWNER_SURFACE_CHANGE")
             val wm = getSystemService(WindowManager::class.java)
             val bounds = if (Build.VERSION.SDK_INT >= 30) wm.maximumWindowMetrics.bounds.toShortString()
                 else "${resources.displayMetrics.widthPixels}x${resources.displayMetrics.heightPixels}"
@@ -213,6 +272,10 @@ class P0WallpaperService : GLWallpaperService() {
         }
 
         override fun onSurfaceDestroyed(holder: SurfaceHolder) {
+            diagnosticSurfaceEpoch++
+            diagnosticRendererReady = false
+            diagnosticSurfaceValid = false
+            publishDiagnosticState("OWNER_SURFACE_DESTROY")
             P0Diagnostics.event(scopeId, "ANDROID_SURFACE_DESTROY", "generation=$surfaceGeneration")
             super.onSurfaceDestroyed(holder) // GL owner handles release; never delete GL resources here.
         }
@@ -231,6 +294,7 @@ class P0WallpaperService : GLWallpaperService() {
 
         override fun onDestroy() {
             destroyed = true
+            P0Diagnostics.unregisterEngine(scopeId)
             loadGeneration++
             P0Controls.remove(scopeId)
             gestures.close()
