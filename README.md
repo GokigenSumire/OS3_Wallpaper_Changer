@@ -1,127 +1,49 @@
-# Hyper Wallpaper Changer
+# Hyper Wallpaper Changer 壁纸切换器
 
-## 当前源码状态（2026-10-28）
+面向 Android 的个人动态壁纸项目，支持图片来源管理、壁纸切换和实时画面调整，基于 Shimmer 修改。
 
-当前主应用为 **94／1.2.6-p10-input-priority**，正式包名 `personal.wallpaper.os3`，minSdk 31／targetSdk 37。面向小米17 Pro／Android 16 的个人动态壁纸项目，P10仍为 `IN_PROGRESS`。
+## 主要功能
 
-主应用可独立使用。需要锁屏兼容时配套模块为 **97／1.1.22-gesture-continuity**；模块由独立本地Git仓库管理，尚未配置GitHub远端，本仓库保存主应用源码与测试。
+- 管理单图、文件夹及子目录来源，支持顺序、随机和手动排序。
+- 双击下一张、三击上一张、两指双击进入编辑。
+- 实时调整图片缩放、位置及显示方式，支持过渡效果和自动切换。
+- 桌面与锁屏分别保存来源、播放状态和编辑设置。
 
-用户已明确确认主94／模块97“测试基本符合预期”。该反馈属于本组合；未逐项回传的用例不补写PASS，尚无P10阶段推进决定。
+## 当前版本
 
-当前锁屏修复包括稳定输入场景、图片忙时的有界动作队列、正常系统解锁后的独立编辑，以及连续手势间首按保留。最高优先级由用户显式开启；实际LOCK、通道身份、图片票据和编辑系统解锁仍校验。
+| 组件 | 版本 | 使用条件 |
+| --- | --- | --- |
+| 主壁纸 | 94／1.2.6-p10-input-priority | 可独立使用，无需Root或LSPosed |
+| 可选兼容模块 | 97／1.1.22-gesture-continuity | 需要Root及LSPosed，仅在设备需要兼容时安装 |
+
+最低 Android 12（API31），targetSdk37；主要实测设备为小米17 Pro／Android16。不同系统的锁屏支持以实际验证为准。
+
+版本说明与安装包见 [Releases](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases)。当前准备的是P10预发布草稿，详细验证状态见[主94／模块97发布说明](docs/releases/主94-模块97.md)。模块源码独立管理，对应源码归档随配套版本准备。
+
+## 安装与使用
+
+1. 安装主应用，选择图片来源，再通过系统壁纸选择器应用到桌面或锁屏。
+2. 已安装主94的设备无需重装同一主包；需要锁屏兼容时，可单独更新模块97并正常重启，使模块重新加载。
+3. 模块作用域保留“系统框架／Android”和“系统界面／SystemUI”。按需开启“原生锁屏业务输入”与“锁屏手势最高优先级”。
+
+最高优先级下，系统动作可能与壁纸手势同时响应；进入锁屏图片编辑仍需系统正常解锁。升级请保留原数据和来源授权。
 
 ## 验证状态
 
-- 主94正式构建：2136项单测／176类，lint 0错误、142警告。
-- 配套模块97正式构建：1324项单测／80类，lint 0错误、29警告；模块源码不在本仓库中。
-- 联合候选门禁340项通过，45＋10项有效定向反例通过。
-- 完整反例为695/696匹配；剩余一项预期原子状态门禁与实际拒绝项不一致，仍待修复复验，未记为全部通过。
+主94／模块97已获小米17 Pro用户反馈“测试基本符合预期”。主应用2136项、模块1324项单测通过；联合门禁340项及45＋10项有效定向通过。完整反例695/696匹配，剩余一项门禁断言待修复复验。P10仍在进行，未逐项回传的用例不补记通过。
 
-上述自动结果与用户体验分别记录，不据此宣布P10完成。
+## 本地构建
 
-## 源码管理与构建
-
-`main`用于当前源码同步，原有Git历史保留。源码与测试、Gradle包装器、依赖和许可证纳入版本控制；本机配置、私有签名、构建输出、候选归档及CodeGraph索引按`.gitignore`排除。
-
-使用JDK17、Gradle9.7.1、AGP9.4.1、SDK37构建；SDK路径由本机`local.properties`配置。正式私钥和DPAPI凭据仅保存在本机。GitHub Actions当前只有手动入口且任务禁用；源码同步不自动构建或发布APK，详见[GitHub配置说明](.github/SETUP.md)。
-
-以下历史阶段说明与上游介绍按原文保留；当前版本和验证状态以上文为准。
-
-## 历史阶段说明
-
-最新工作版本68／1.2.0-p10-lock-input已接受鉴别的LOCK枚举命令与正常认证后的独立编辑链，配套按需模块69／1.1.0-lock；以下67交接说明为历史。67六项用户反馈通过，切域闪屏已关闭；LOCK逐图停用链只有新版本实机完成后才可改为通过。新三手势／认证／GL／后台可达全部仍需新候选真实检查，代码存在不冒设备已通过。主应用仍独立可用，三手势已原生可达的设备无需模块；兼容模块需用户按需启用系统框架和SystemUI作用域并正常重启。主／模块身份与正式签名、Room8保留，不自动安装／卸载／清数据或操作手机。具体自动／未测状态以本轮候选RESULTS和根质量台账最新记录为准，不公开GitHub或开始P11。
-
-本目录是以 Shimmer 为来源的独立个人非商业工作工程；工作区原始来源保留于 `参考源码/app/shimmer-master`。作者、来源历史和 CC BY-NC-SA 4.0 许可保留，许可证见 [许可证文件](LICENSE)，其他来源及当前分发边界见 [第三方来源与许可](THIRD_PARTY_NOTICES.md)。以下是 Shimmer 上游说明的中文译文；2026-09-24 按用户要求将来源工程的 Markdown 说明也统一为中文，原始来源可从已保存的 Git 基线追溯。上游功能不等于本派生应用当前已实现或已验收。
-
-当前已按用户指令实施P10，正式显示名为 `Hyper Wallpaper Changer`，主应用拟交付版本 `67 / 1.1.2-p10-dual-native`，身份保持 `personal.wallpaper.os3` 和原正式证书。P10-01原生双域图片链已接通：图库、播放、特效可选择桌面／锁屏，分别绑定来源、数据库、四顺序、历史、当前图、逐图启停存储、默认调整、过渡和调度。HOME原数据原位保留，LOCK初始空。新锁屏服务只准入系统实际flags=2；共享、错误、未知目标不写正式LOCK状态，需用户在系统选择器仅应用到锁屏。现有两个Canvas能力探针仍只计数，不读生产图库或执行编辑。原模块62不改，按需使用，不把桌面兼容当锁屏支持。本轮仅修应用顶部切换HOME／LOCK时的装饰背景交接，不改变生产播放状态；实际完成情况见候选检查记录，不以此说明代替验证。
-
-版本67按同身份同证书覆盖65／64／63／61设计，保HOME原文件名与Room8结构，不复制其数据到LOCK，不继承旧`.debug`沙箱；不自动卸载或清数据。版本66仅为本轮中间构建，保留未交付，不作为候选安装；后续应用上下文小修重新分配67，不复用不同APK的版本号。用户已回传65原生双域用例通过并指出LOCK编辑未开放，故其逐图停用和停用列表缩略图／恢复子项仍未验证，不将整体pass用于补齐。P10采用原生显示＋按需Root输入，编辑先经系统正常安全解锁；本轮Root锁屏输入和独立安全编辑尚未完成，不开放会显示HOME的透明LOCK编辑入口。完整P10仍在实施，不把原生双域图片链当完整阶段通过。实际构建、候选核验和设备结果见根QUALITY_LEDGER与候选RESULTS，未执行均NOT_RUN，本文不代替实际检查。GitHub按用户选择沿用 `GokigenSumire/OS3_Wallpaper_Changer`，计划源码提交与APK发布，但来源许可／隐私审计和功能验收未闭前不推送半实现包或宣已发布。
-
-构建固定 Gradle 9.7.1、AGP 9.4.1、JDK 17、API/target 37、Build Tools 37.0.0、Kotlin/serialization/Compose plugin 2.2.10、KSP 2.3.6、Room 2.7.2。本机构建进程显式使用用户安装的 JDK17，并将其 bin 放在 PATH 首位；SDK 路径保存在忽略的 `local.properties`，不自动安装 JDK/SDK。
-
-主应用独立运行，不以 Root、LSPosed 或兼容模块为前置条件。只有系统桌面不向动态壁纸转发触摸、且确实需要兼容的设备，才可选安装 `personal.wallpaper.os4.e1` 模块；桌面手势正常的设备无需安装。设置页提供可选入口，不自动申请系统控制或启用兼容。
-
-正式签名密钥与旧调试证书分离，由工作区本机私有目录保管，密码使用当前 Windows 用户的 DPAPI 保护；不进入源码与交付包。工作区执行 `tools/Invoke-FormalSignedBuild.ps1 -Role wallpaper -EvidenceDirectory <本轮证据目录>`，实际执行 `testReleaseUnitTest`、`lintRelease`、`compileDebugAndroidTestKotlin`、`assembleRelease --rerun-tasks`。签名工具和证据以工作区交接为准，源码复建需自行配置 SDK 及个人签名，不能获得原私钥。
+使用JDK17、Android SDK37、Build Tools37.0.0；Gradle9.7.1和AGP9.4.1已固定。在本机`local.properties`配置SDK路径后执行：
 
 ```powershell
-$env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-17.0.20.101-hotspot'
-$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
 .\gradlew.bat :shimmer:testDebugUnitTest :shimmer:lintDebug :shimmer:assembleDebug
 ```
 
-首次依赖下载如需本机已有代理，可仅为上述命令加 `-Dhttps.proxyHost` / `-Dhttps.proxyPort` 参数；本輪实际环境和命令见工作区 `docs/evidence/P0/BUILD_ENVIRONMENT_2026-09-22.md`。构建不会安装 APK 或操作手机。正式身份 `personal.wallpaper.os3`，调试身份 `personal.wallpaper.os3.debug`，debug 与 release 密钥分开；只安装候选目录中已核验哈希的 APK。不要删除或替换本机 debug 密钥；同包名不同签名不能覆盖升级，原 Shimmer 数据不自动导入。
+正式签名使用本机独立配置，不随源码提供。GitHub Actions自动构建及上传保持禁用；发布准备流程见[GitHub配置说明](.github/SETUP.md)。
 
-## Shimmer 上游说明（保留）
+## 来源与许可
 
-![shimmer_logo](https://github.com/user-attachments/assets/6490fdd3-4b6a-45ba-8b4c-d74d2146cd61)
+基于Shimmer修改，原作者：Copyright (c) 2025 Abdussamet Kocak。保留原 [CC BY-NC-SA 4.0许可证](LICENSE) 和署名。
 
-# Shimmer（上游说明）
-
-一款现代 Android 动态壁纸应用，使用平滑的 GPU 效果和过渡来呈现照片。
-
-## 功能
-
-- **动态图片**：从本地文件夹加载照片，支持不重复随机选择和自动幻灯片播放。
-- **平滑过渡**：交叉淡化动画和响应桌面滑动的视差滚动。
-- **硬件加速**：使用 OpenGL ES 3.0 提供高性能效果并尽量降低电量消耗。
-- **智能随机**：Shimmer 轮换选择文件夹并记录“上次显示”时间，确保集合中的每张图片都显示过后才重复。
-
-### 视觉效果
-
-- **高斯模糊**：可调节强度，并支持智能超时和锁屏触发。
-- **胶片颗粒**：可定制的复古纹理。
-- **双色调**：提供 25 个以上预设和多种混合模式，为图片着色。
-- **色差**：响应多点触控手势的交互式 RGB 畸变。
-- **调暗**：平滑调暗壁纸，提高图标和小组件的可读性。
-
-### 交互
-
-- **手势**：可自定义三击和多指双击操作（下一张、切换模糊、随机双色调、加入收藏）。
-- **分享**：支持 `ACTION_SEND` 和 `ACTION_SEND_MULTIPLE`，可从任意应用分享图片作为候选壁纸。
-- **自动化**：集成解锁、锁屏等系统事件。
-
-### 特殊集合
-
-- **收藏夹**：通过手势或快捷方式将喜欢的壁纸快速保存到专用文件夹。
-- **Shared**：通过系统“分享”菜单，直接从图库或其他应用将图片发送到 Shimmer。图片会进入特殊的“Shared”集合，便于访问。
-
-## 高级功能：自动化与 Intent
-
-Shimmer 支持若干广播 Intent，可通过 **Tasker**、**MacroDroid** 或 ADB 从外部控制壁纸。
-
-### 操作
-
-| 操作 Action | 说明 | 参数 Extras |
-| :--- | :--- | :--- |
-| `dev.abdus.apps.shimmer.action.NEXT_IMAGE` | 切换到下一张随机图片。 | - |
-| `dev.abdus.apps.shimmer.action.RANDOM_DUOTONE` | 切换到随机双色调预设。 | - |
-| `dev.abdus.apps.shimmer.action.SET_BLUR_PERCENT` | 立即设置模糊程度。 | `blur_percent`（Float：0.0 到 1.0） |
-| `dev.abdus.apps.shimmer.action.ENABLE_BLUR` | 强制壁纸进入模糊状态。 | - |
-| `dev.abdus.apps.shimmer.action.REFRESH_FOLDERS` | 触发重新扫描图片文件夹。 | - |
-| `dev.abdus.apps.shimmer.action.ADD_TO_FAVORITES` | 将当前图片保存到收藏夹目录。 | - |
-
-### 对外广播
-
-当图片加入收藏夹时，Shimmer 会广播：
-`dev.abdus.apps.shimmer.action.FAVORITE_ADDED`
-- `favorite_uri`：已保存文件的 URI。
-- `favorite_display_name`：文件名。
-
-## 环境要求
-
-- Android 8.0（API 26）或更高版本。
-- 访问照片文件夹所需的存储权限。
-
-## 许可证
-
-Copyright (c) 2025 Abdussamet Kocak
-
-本项目采用 [知识共享署名-非商业性使用-相同方式共享 4.0 国际许可协议](https://creativecommons.org/licenses/by-nc-sa/4.0/) 授权。
-
-### 当前许可与液态玻璃移除
-
-2026-10-16 按用户要求，当前 P9 工作分支移除液态玻璃开关、折射实现、背板接线和直接 `miuix-blur` 构建依赖；这不修改已冻结旧候选及其历史来源记录。半透明卡片、壁纸背景模糊与悬浮底栏不等于液态玻璃，按各自实际来源继续管理。
-
-本次复核发现，先前把 `miuix-blur-android:0.9.0` 一概写成 GPL-3.0 不准确：本机缓存中该精确版本的发布 POM 声明 **Apache-2.0**，且其 Gradle 模块元数据未声明 `miuix-shader-android` 为依赖。其他已缓存版本不代表本构建实际解析版本。完整证据和哈希记录于工作区的 `docs/evidence/P9/GLASS_REMOVAL_2026-10-16/LICENSE_AUDIT.md`。纠正错误归类不等于给本应用换许可证。
-
-Shimmer 派生部分仍保留 **CC BY-NC-SA 4.0** 与原作者署名，不擅自改为 MIT 或 GPL。当前悬浮底栏仍有 KernelSU 来源声明；其上游仓库 GPL-3.0 与文件头的 Apache-2.0 来源说明需要继续核定，不能仅因删除玻璃就宣称所有 GPL 来源风险已清零。公开 GitHub 源码、APK 或其他分发前，须完成剩余来源／许可兼容核定、归属声明和隐私排除；本轮不执行公开推送。可选兼容模块是独立应用，其自有 GPL-3.0 许可不自动改变主壁纸派生源码的授权。
+第三方归属、已移除组件及尚待核定的来源边界见[第三方来源与许可](THIRD_PARTY_NOTICES.md)。兼容模块采用其自身GPL-3.0许可。本仓库不据此声明已完成全部公开分发许可核对。
