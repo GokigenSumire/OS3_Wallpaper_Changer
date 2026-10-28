@@ -2,7 +2,11 @@
 
 ## 当前P10实际状态
 
-当前`workflows/build-release.yml`只有`workflow_dispatch`，且任务明确`if: ${{ false }}`，自动构建／上传处于禁用状态。创建Release不会按本说明自动构建。用户已选择沿用`GokigenSumire/OS3_Wallpaper_Changer`、后续提交源码和发布APK，但能力候选未完成完整锁屏功能，来源许可与隐私／历史白名单仍待核，尚未提交、推送或上传。
+当前`workflows/build-release.yml`只有`workflow_dispatch`，且任务明确`if: ${{ false }}`，自动构建／上传处于禁用状态。创建Release不会按本说明自动构建。
+
+用户已授权管理并同步`GokigenSumire/OS3_Wallpaper_Changer`源码。当前主应用94，配套模块97由独立本地仓库管理；主仓库默认`main`保存当前源码。主94／模块97用户反馈“测试基本符合预期”，P10仍IN_PROGRESS；完整反例695/696匹配，剩余一项门禁断言待修复。实际源码同步以Git分支提交为准。
+
+本轮只同步主工程源码、测试与说明。APK发布、启用云端构建和托管签名密钥不在本次操作中。
 
 本机正式密钥与DPAPI凭据仅本地保管，不上传仓库或因本说明配置云端密钥。发布前先核准确源码与许可、排除私钥／手机材料／系统提取件，使用同一经过验证的APK和SHA；是否启用CI及采用何种签名托管需另定，不自动启用工作流。
 
