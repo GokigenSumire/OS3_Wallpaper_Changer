@@ -29,3 +29,26 @@ keystore.properties
 
 # Windows thumbnail db
 .DS_Store
+
+# 本地索引、候选归档和临时日志
+.codegraph/
+/artifacts/
+/releases/
+*.log
+
+# 其他分发与本机构建产物
+*.aab
+*.apks
+.cxx/
+.externalNativeBuild/
+Thumbs.db
+
+# 私有签名材料与本机环境；示例配置仍可提交
+.private-signing/
+*.p12
+*.pfx
+*.dpapi
+.env
+.env.*
+!.env.example
+!.env.sample
