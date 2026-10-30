@@ -14,11 +14,11 @@
 | 组件 | 版本 | 使用条件 |
 | --- | --- | --- |
 | 主壁纸 | 94／1.2.6-p10-input-priority | 可独立使用，无需Root或LSPosed |
-| 可选兼容模块 | 97／1.1.22-gesture-continuity | 需要Root及LSPosed，仅在设备需要兼容时安装 |
+| [可选兼容模块](https://github.com/GokigenSumire/OS4_E1_Observer) | 97／1.1.22-gesture-continuity | 需要Root及LSPosed，仅在设备需要兼容时安装 |
 
 最低 Android 12（API31），targetSdk37；主要实测设备为小米17 Pro／Android16。不同系统的锁屏支持以实际验证为准。
 
-版本说明与安装包见 [Releases](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases)。当前准备的是P10预发布草稿，详细验证状态见[主94／模块97发布说明](docs/releases/主94-模块97.md)。模块源码独立管理，对应源码归档随配套版本准备。
+版本说明与安装包见 [Releases](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases)。当前准备的是P10预发布草稿，详细验证状态见[主94／模块97发布说明](docs/releases/主94-模块97.md)。[模块源码仓库](https://github.com/GokigenSumire/OS4_E1_Observer)独立管理，对应源码归档随配套版本准备。
 
 ## 安装与使用
 

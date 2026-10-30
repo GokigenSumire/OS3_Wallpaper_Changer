@@ -4,7 +4,7 @@
 
 当前`workflows/build-release.yml`只有`workflow_dispatch`，且任务明确`if: ${{ false }}`，自动构建／上传处于禁用状态。创建Release不会按本说明自动构建。
 
-用户已授权管理并同步`GokigenSumire/OS3_Wallpaper_Changer`源码。当前主应用94，配套模块97由独立本地仓库管理；主仓库默认`main`保存当前源码。主94／模块97用户反馈“测试基本符合预期”，P10仍IN_PROGRESS；完整反例695/696匹配，剩余一项门禁断言待修复。实际源码同步以Git分支提交为准。
+用户已授权管理并同步`GokigenSumire/OS3_Wallpaper_Changer`源码。当前主应用94，配套模块97由[独立仓库](https://github.com/GokigenSumire/OS4_E1_Observer)管理；主仓库默认`main`保存当前源码。主94／模块97用户反馈“测试基本符合预期”，P10仍IN_PROGRESS；完整反例695/696匹配，剩余一项门禁断言待修复。实际源码同步以Git分支提交为准。
 
 用户现已要求准备Releases：手动准备主94／模块97的GitHub预发布草稿，附件复用原已测APK、匹配源码、SHA256和许可证。草稿准备不启用云端构建或托管签名密钥；发布前未完成项见[版本说明](../docs/releases/主94-模块97.md)。
 
