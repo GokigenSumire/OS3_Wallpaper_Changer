@@ -18,7 +18,7 @@
 
 最低 Android 12（API31），targetSdk37；主要实测设备为小米17 Pro／Android16。不同系统的锁屏支持以实际验证为准。
 
-版本说明与安装包见 [Releases](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases)。当前为P10预发布，详细验证状态见[主94／模块97发布说明](docs/releases/主94-模块97.md)。[模块源码仓库](https://github.com/GokigenSumire/OS4_E1_Observer)独立管理，对应源码归档随配套版本提供。
+版本说明与安装包见 [Releases](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases)。当前正式发布主94／模块97，验证边界见[发布说明](docs/releases/主94-模块97.md)。[模块源码仓库](https://github.com/GokigenSumire/OS4_E1_Observer)与[模块独立Release](https://github.com/GokigenSumire/OS4_E1_Observer/releases/tag/v1.1.22-p10-m97)分别提供源码和配套安装文件。
 
 ## 安装与使用
 
@@ -30,7 +30,7 @@
 
 ## 验证状态
 
-主94／模块97已获小米17 Pro用户反馈“测试基本符合预期”。主应用2136项、模块1324项单测通过；联合门禁340项及45＋10项有效定向通过。完整反例695/696匹配，剩余一项门禁断言待修复复验。P10仍在进行，未逐项回传的用例不补记通过。
+主94／模块97已获小米17 Pro用户反馈“测试基本符合预期”。主应用2136项、模块1324项单测通过；联合门禁340项及45＋10项有效定向通过。原完整反例695/696匹配，断言修正后的单项定向复验已通过，完整696项复验及最终候选绑定仍待完成。本次正式发布保留这两项核验债务，P10仍在进行，未逐项回传的用例不补记通过。
 
 ## 本地构建
 
