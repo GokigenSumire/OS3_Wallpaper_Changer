@@ -1,0 +1,239 @@
+{
+  "date": "2026-11-02",
+  "scope": "CURRENT_MAIN_SOURCE_FOUR_FILES_AND_RELEASE_RUNTIME",
+  "reviewedSources": [
+    {
+      "repository": "abdusco/shimmer",
+      "commit": "bd8e1d981b7b8372b159e46d29e8dfd900e9719f",
+      "path": "LICENSE",
+      "url": "https://github.com/abdusco/shimmer/blob/bd8e1d981b7b8372b159e46d29e8dfd900e9719f/LICENSE",
+      "gitBlob": "0b3bd66ae6656c8d997b48af864459788fda11f7",
+      "sha256": "35F64921BE5C751CFC14DC8186F2CA70222C60631B8E4263265030EED672ADB1",
+      "bytes": 1574
+    },
+    {
+      "repository": "abdusco/shimmer",
+      "commit": "bd8e1d981b7b8372b159e46d29e8dfd900e9719f",
+      "path": "README.md",
+      "url": "https://github.com/abdusco/shimmer/blob/bd8e1d981b7b8372b159e46d29e8dfd900e9719f/README.md",
+      "gitBlob": "fd7070da6d0faea5bcb6c18e86a23de64a5c53d2",
+      "sha256": "BBD33C9F09C4CBF19F299654AEEA21872D830DBFB2D9CA036FF8E2A2CB95BC08",
+      "bytes": 3217
+    },
+    {
+      "repository": "tiann/KernelSU",
+      "commit": "7bab12df939668a4406cec4c07f4e2b3c555e6b7",
+      "path": "LICENSE",
+      "url": "https://github.com/tiann/KernelSU/blob/7bab12df939668a4406cec4c07f4e2b3c555e6b7/LICENSE",
+      "gitBlob": "f288702d2fa16d3cdf0035b15a9fcbc552cd88e7",
+      "sha256": "3972DC9744F6499F0F9B2DBF76696F2AE7AD8AF9B23DDE66D6AF86C9DFB36986",
+      "bytes": 35149
+    },
+    {
+      "repository": "tiann/KernelSU",
+      "commit": "7bab12df939668a4406cec4c07f4e2b3c555e6b7",
+      "path": "docs/README.md",
+      "url": "https://github.com/tiann/KernelSU/blob/7bab12df939668a4406cec4c07f4e2b3c555e6b7/docs/README.md",
+      "gitBlob": "574af92f3666234fac863c23b198645bcaa62ac1",
+      "sha256": "8086C29FC84A1885F0878BC6A0B3921CB05776AFF3DC418DA7374B82BE88D23C",
+      "bytes": 3278
+    },
+    {
+      "repository": "tiann/KernelSU",
+      "commit": "7bab12df939668a4406cec4c07f4e2b3c555e6b7",
+      "path": "manager/app/src/main/java/me/weishu/kernelsu/ui/component/FloatingBottomBar.kt",
+      "url": "https://github.com/tiann/KernelSU/blob/7bab12df939668a4406cec4c07f4e2b3c555e6b7/manager/app/src/main/java/me/weishu/kernelsu/ui/component/FloatingBottomBar.kt",
+      "gitBlob": "b4698bff5e421da7743ec83a389028e167c2ab4b",
+      "sha256": "7B9F68D8E56336E511640822C9807989D0D751AC832A0A542E9D75374B72BCA9",
+      "bytes": 21643
+    },
+    {
+      "repository": "tiann/KernelSU",
+      "commit": "7bab12df939668a4406cec4c07f4e2b3c555e6b7",
+      "path": "manager/app/src/main/java/me/weishu/kernelsu/ui/MainActivity.kt",
+      "url": "https://github.com/tiann/KernelSU/blob/7bab12df939668a4406cec4c07f4e2b3c555e6b7/manager/app/src/main/java/me/weishu/kernelsu/ui/MainActivity.kt",
+      "gitBlob": "132dba28bdcf8657d73230df5b3dcc135a562272",
+      "sha256": "99347A1400074ED2D04EB881A4151CA8CA836882C67AAD7235C1B92F3C6E1C17",
+      "bytes": 24528
+    },
+    {
+      "repository": "tiann/KernelSU",
+      "commit": "7bab12df939668a4406cec4c07f4e2b3c555e6b7",
+      "path": "manager/app/src/main/java/me/weishu/kernelsu/ui/theme/Theme.kt",
+      "url": "https://github.com/tiann/KernelSU/blob/7bab12df939668a4406cec4c07f4e2b3c555e6b7/manager/app/src/main/java/me/weishu/kernelsu/ui/theme/Theme.kt",
+      "gitBlob": "48409a56f3f94297363baababa09bae59db578c1",
+      "sha256": "1D781D873354C3C77F9BEA0E808C4C2D7165B1505DD2D2517F102F5ED3D6DF87",
+      "bytes": 4290
+    },
+    {
+      "repository": "tiann/KernelSU",
+      "commit": "7bab12df939668a4406cec4c07f4e2b3c555e6b7",
+      "path": "manager/app/src/main/java/me/weishu/kernelsu/ui/theme/MaterialTheme.kt",
+      "url": "https://github.com/tiann/KernelSU/blob/7bab12df939668a4406cec4c07f4e2b3c555e6b7/manager/app/src/main/java/me/weishu/kernelsu/ui/theme/MaterialTheme.kt",
+      "gitBlob": "ee7cea3aed8cb674521167844e77dfd3fbdf15e6",
+      "sha256": "54248B61AF41373B2400118502ED528CFBFABDD3AE4ABA5DA5EF48B16FD73B61",
+      "bytes": 1855
+    },
+    {
+      "repository": "compose-miuix-ui/miuix",
+      "commit": "23b469ee404b0ea9737e225bbd87d224226a3efa",
+      "path": "LICENSE",
+      "url": "https://github.com/compose-miuix-ui/miuix/blob/23b469ee404b0ea9737e225bbd87d224226a3efa/LICENSE",
+      "gitBlob": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "sha256": "CFC7749B96F63BD31C3C42B5C471BF756814053E847C10F3EB003417BC523D30",
+      "bytes": 11358
+    },
+    {
+      "repository": "compose-miuix-ui/miuix",
+      "commit": "23b469ee404b0ea9737e225bbd87d224226a3efa",
+      "path": "example/shared/src/commonMain/kotlin/component/liquid/LiquidGlassNavigationBar.kt",
+      "url": "https://github.com/compose-miuix-ui/miuix/blob/23b469ee404b0ea9737e225bbd87d224226a3efa/example/shared/src/commonMain/kotlin/component/liquid/LiquidGlassNavigationBar.kt",
+      "gitBlob": "edc9895e1453d6d7f5ee1d18d057ac2dd037853f",
+      "sha256": "77E4CBB63909A0BF86782D3641F8AFF553D6E48DC4BAAC3C7E8308F81812C0C4",
+      "bytes": 25688
+    },
+    {
+      "repository": "Kyant0/AndroidLiquidGlass",
+      "commit": "65ab177e90e5c1d8c62e70cf7755841982da65f6",
+      "path": "LICENSE",
+      "url": "https://github.com/Kyant0/AndroidLiquidGlass/blob/65ab177e90e5c1d8c62e70cf7755841982da65f6/LICENSE",
+      "gitBlob": "e29d7cc03d2595fe32466a3ff9f3d7bc75d56339",
+      "sha256": "4B9F7E7C2821A5A1822A6CF1E4A34E877BBA48A99B9BBA1F03E5E2ECCF6DEC56",
+      "bytes": 10750
+    },
+    {
+      "repository": "tiann/KernelSU",
+      "commit": "dc719b58f76d67806093e7ce8cd475362c6b7f73",
+      "path": "manager/app/src/main/java/me/weishu/kernelsu/ui/component/FloatingBottomBar.kt",
+      "url": "https://github.com/tiann/KernelSU/blob/dc719b58f76d67806093e7ce8cd475362c6b7f73/manager/app/src/main/java/me/weishu/kernelsu/ui/component/FloatingBottomBar.kt",
+      "gitBlob": "859ef67963c68bd9b6ba4bf659d2ad3184ce555c",
+      "sha256": "16FED77B937EB07B7E0746B3ED16519771A38C0859585219F2607B9D6B03E0E1",
+      "bytes": 14872
+    },
+    {
+      "repository": "tiann/KernelSU",
+      "commit": "dc719b58f76d67806093e7ce8cd475362c6b7f73",
+      "path": "LICENSE",
+      "url": "https://github.com/tiann/KernelSU/blob/dc719b58f76d67806093e7ce8cd475362c6b7f73/LICENSE",
+      "gitBlob": "f288702d2fa16d3cdf0035b15a9fcbc552cd88e7",
+      "sha256": "3972DC9744F6499F0F9B2DBF76696F2AE7AD8AF9B23DDE66D6AF86C9DFB36986",
+      "bytes": 35149
+    },
+    {
+      "repository": "compose-miuix-ui/miuix",
+      "commit": "22e449115783d5d79e83cfafa97965f33b343e1c",
+      "path": "example/shared/src/commonMain/kotlin/component/liquid/LiquidGlassNavigationBar.kt",
+      "url": "https://github.com/compose-miuix-ui/miuix/blob/22e449115783d5d79e83cfafa97965f33b343e1c/example/shared/src/commonMain/kotlin/component/liquid/LiquidGlassNavigationBar.kt",
+      "gitBlob": "538b538977d0362a74c7c458c1915e636ab0525c",
+      "sha256": "73E9BA306F37BF192BD25B25A86B16F9E35BC367C83A31AD5587892BA073A5D1",
+      "bytes": 19182
+    },
+    {
+      "repository": "compose-miuix-ui/miuix",
+      "commit": "22e449115783d5d79e83cfafa97965f33b343e1c",
+      "path": "LICENSE",
+      "url": "https://github.com/compose-miuix-ui/miuix/blob/22e449115783d5d79e83cfafa97965f33b343e1c/LICENSE",
+      "gitBlob": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "sha256": "CFC7749B96F63BD31C3C42B5C471BF756814053E847C10F3EB003417BC523D30",
+      "bytes": 11358
+    },
+    {
+      "repository": "compose-miuix-ui/miuix",
+      "commit": "bc4b939c19aad0b6486f38610d17ad6bf682639f",
+      "path": "example/shared/src/commonMain/kotlin/component/liquid/LiquidGlassNavigationBar.kt",
+      "url": "https://github.com/compose-miuix-ui/miuix/blob/bc4b939c19aad0b6486f38610d17ad6bf682639f/example/shared/src/commonMain/kotlin/component/liquid/LiquidGlassNavigationBar.kt",
+      "gitBlob": "edc9895e1453d6d7f5ee1d18d057ac2dd037853f",
+      "sha256": "77E4CBB63909A0BF86782D3641F8AFF553D6E48DC4BAAC3C7E8308F81812C0C4",
+      "bytes": 25688
+    },
+    {
+      "repository": "compose-miuix-ui/miuix",
+      "commit": "bc4b939c19aad0b6486f38610d17ad6bf682639f",
+      "path": "LICENSE",
+      "url": "https://github.com/compose-miuix-ui/miuix/blob/bc4b939c19aad0b6486f38610d17ad6bf682639f/LICENSE",
+      "gitBlob": "d645695673349e3947e8e5ae42332d0ac3164cd7",
+      "sha256": "CFC7749B96F63BD31C3C42B5C471BF756814053E847C10F3EB003417BC523D30",
+      "bytes": 11358
+    }
+  ],
+  "reviewedFiles": [
+    {
+      "path": "shimmer/src/main/java/dev/abdus/apps/shimmer/ui/components/BlurredNavigationBar.kt",
+      "sha256": "C048E3DB2BE3F10D1EA68F5E43A9CA72444C4F958A17E3CFB6ABEF1DCD84F917",
+      "bytes": 12486,
+      "lines": 249
+    },
+    {
+      "path": "shimmer/src/main/java/dev/abdus/apps/shimmer/ui/effects/BlurEffect.kt",
+      "sha256": "AED34508D892AB6040D698F63C1A103E2CB1D9F03180CB407BBBEBA53FE09E28",
+      "bytes": 2736,
+      "lines": 59
+    },
+    {
+      "path": "shimmer/src/main/java/dev/abdus/apps/shimmer/ui/theme/Shape.kt",
+      "sha256": "ACD90C88BCC73035640AB851E839CA70D7915196913AA8A34E74D0249D3AE937",
+      "bytes": 616,
+      "lines": 17
+    },
+    {
+      "path": "shimmer/src/main/java/dev/abdus/apps/shimmer/MainActivity.kt",
+      "sha256": "C961952BAB61151FDF828E9E28F37869BE0FB64B31E144461442332EAB434E03",
+      "bytes": 4078,
+      "lines": 88
+    }
+  ],
+  "shimmerSourceBaseline": {
+    "repository": "abdusco/shimmer",
+    "commit": "69b2f0931d9292065f7507a66247ad8a1ca9e1fb",
+    "matchedTrackedFiles": 105,
+    "mismatchedTrackedFiles": [
+      "README.md",
+      ".github/SETUP.md"
+    ],
+    "allSourceResourceBuildAndLicenseFilesMatch": true,
+    "claim": "CONTENT_BASELINE_NOT_ORIGINAL_DOWNLOAD_LOG"
+  },
+  "conclusion": "REVIEW_COMPLETE_NO_UNTRACED_INCREMENT_IDENTIFIED",
+  "limits": [
+    "CURRENT_FOUR_REFERENCED_FILES",
+    "NO_KERNELSU_WHOLE_FILE_RELICENSE",
+    "NO_ALL_HISTORY_CLEARANCE",
+    "FROZEN_APK_NOT_REBUILT",
+    "OTHER_RELEASE_GATES_UNCHANGED"
+  ],
+  "chronology": {
+    "apacheExampleCommit": "bc4b939c19aad0b6486f38610d17ad6bf682639f",
+    "apacheCommitDate": "2026-08-08T11:32:15Z",
+    "kernelSyncCommit": "e4ba138cd3bb1e07a0e95723c58b3c9c5d866e10",
+    "kernelSyncCommitDate": "2026-09-03T10:44:01Z",
+    "sourceAndLicenseSameBeforeKernelSync": true
+  },
+  "licenseFiles": [
+    {
+      "path": "licenses/Apache-2.0-Kyant.txt",
+      "sha256": "4B9F7E7C2821A5A1822A6CF1E4A34E877BBA48A99B9BBA1F03E5E2ECCF6DEC56"
+    },
+    {
+      "path": "licenses/Apache-2.0-miuix.txt",
+      "sha256": "CFC7749B96F63BD31C3C42B5C471BF756814053E847C10F3EB003417BC523D30"
+    },
+    {
+      "path": "licenses/MIT-Tabler.txt",
+      "sha256": "784C84398EB310D370E712938C9F17149CD80F2C0692C50210B9DC6D1B4862C4"
+    },
+    {
+      "path": "licenses/MPL-2.0.txt",
+      "sha256": "2684DE17300E0A434686F1EC7F8AF6045207A4B457A3FE04B2B9CE655E7C5D50",
+      "sourceUrl": "https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt",
+      "originalSha256": "FAB3DD6BDAB226F1C08630B1DD917E11FCB4EC5E1E020E2C16F83A0A13863E85",
+      "formatting": "TRAILING_HORIZONTAL_WHITESPACE_REMOVED_ONLY",
+      "changedLines": [
+        38
+      ]
+    },
+    {
+      "path": "licenses/NOTICE-OkHttp-publicsuffix.txt",
+      "sha256": "8DBBDE6F05F9DD8BC702D0463325E48632477FE707D30D00539E51A3AD5E3D4F"
+    }
+  ]
+}

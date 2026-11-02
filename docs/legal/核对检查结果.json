@@ -1,0 +1,136 @@
+{
+  "date": "2026-11-02",
+  "status": "PASS",
+  "checks": [
+    {
+      "check": "OS3_Wallpaper_Changer_ORIGINAL_FILES",
+      "passed": true,
+      "detail": [
+        "README.md",
+        "THIRD_PARTY_NOTICES.md",
+        "docs/releases/主94-模块97.md"
+      ]
+    },
+    {
+      "check": "OS4_E1_Observer_ORIGINAL_FILES",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "check": "FROZEN_SUITE_TOP_LEVEL_UNCHANGED",
+      "passed": true,
+      "detail": {
+        "checked": 8,
+        "changed": []
+      }
+    },
+    {
+      "check": "TWO_FROZEN_SOURCE_ARCHIVES",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "SHIMMER_ORIGINAL_LICENSE",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "FOUR_REVIEWED_SOURCE_FILES_UNCHANGED",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "ALL_FIXED_REF_SOURCE_BLOBS",
+      "passed": true,
+      "detail": 17
+    },
+    {
+      "check": "SHIMMER_CONTENT_BASELINE",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "ORIGINAL_LICENSE_COPY_Apache-2.0-miuix.txt",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "ORIGINAL_LICENSE_COPY_Apache-2.0-Kyant.txt",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "RUNTIME_RECORDS_DEDUPLICATED",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "ALL_RUNTIME_COORDINATE_LICENSES",
+      "passed": true,
+      "detail": 90
+    },
+    {
+      "check": "ALL_DIRECT_POM_DIGESTS",
+      "passed": true,
+      "detail": 90
+    },
+    {
+      "check": "GUAVA_PARENT_LICENSE",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "NO_REMOVED_RUNTIME_LIBRARIES",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "ORIGINAL_MPL_DATA_NOTICE",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "ORIGINAL_MIT_ICON",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "ORIGINAL_MIT_LICENSE_COPY",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "LOCAL_MARKDOWN_LINKS",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "check": "PUBLIC_JSON_VALID",
+      "passed": true,
+      "detail": null
+    },
+    {
+      "check": "PUBLIC_DOCUMENTS_NO_LOCAL_CREDENTIAL_PATTERNS",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "check": "GIT_DIFF_CHECK",
+      "passed": true,
+      "detail": [
+        {
+          "exit": 0,
+          "stdout": ""
+        },
+        {
+          "exit": 0,
+          "stdout": ""
+        }
+      ]
+    }
+  ],
+  "passCount": 22,
+  "total": 22,
+  "applicationBuild": "NOT_RUN_DOCUMENT_ONLY",
+  "deviceTests": "NOT_RUN_DOCUMENT_ONLY"
+}

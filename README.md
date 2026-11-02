@@ -18,7 +18,7 @@
 
 最低 Android 12（API31），targetSdk37；主要实测设备为小米17 Pro／Android16。不同系统的锁屏支持以实际验证为准。
 
-版本说明与安装包见 [Releases](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases)。当前准备的是P10预发布草稿，详细验证状态见[主94／模块97发布说明](docs/releases/主94-模块97.md)。[模块源码仓库](https://github.com/GokigenSumire/OS4_E1_Observer)独立管理，对应源码归档随配套版本准备。
+版本说明与安装包见 [Releases](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases)。当前为P10预发布，详细验证状态见[主94／模块97发布说明](docs/releases/主94-模块97.md)。[模块源码仓库](https://github.com/GokigenSumire/OS4_E1_Observer)独立管理，对应源码归档随配套版本提供。
 
 ## 安装与使用
 
@@ -44,6 +44,6 @@
 
 ## 来源与许可
 
-基于Shimmer修改，原作者：Copyright (c) 2025 Abdussamet Kocak。保留原 [CC BY-NC-SA 4.0许可证](LICENSE) 和署名。
+基于[Shimmer](https://github.com/abdusco/shimmer)修改，原作者：Copyright (c) 2025 Abdussamet Kocak。保留原 [CC BY-NC-SA 4.0许可证](LICENSE) 和署名。
 
-第三方归属、已移除组件及尚待核定的来源边界见[第三方来源与许可](THIRD_PARTY_NOTICES.md)。兼容模块采用其自身GPL-3.0许可。本仓库不据此声明已完成全部公开分发许可核对。
+悬浮底栏等当前剩余来源已完成[逐段核对](docs/legal/来源与许可核对.md)，保留Apache示例、KernelSU参考及其他上游归属；原许可和历史说明见[第三方来源与许可](THIRD_PARTY_NOTICES.md)。兼容模块采用其自身GPL-3.0许可。当前核对不替代旧版本逐份审计或其他发布门禁。
