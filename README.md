@@ -46,4 +46,4 @@
 
 基于[Shimmer](https://github.com/abdusco/shimmer)修改，原作者：Copyright (c) 2025 Abdussamet Kocak。保留原 [CC BY-NC-SA 4.0许可证](LICENSE) 和署名。
 
-悬浮底栏等当前剩余来源已完成[逐段核对](docs/legal/来源与许可核对.md)，保留Apache示例、KernelSU参考及其他上游归属；原许可和历史说明见[第三方来源与许可](THIRD_PARTY_NOTICES.md)。兼容模块采用其自身GPL-3.0许可。当前核对不替代旧版本逐份审计或其他发布门禁。
+悬浮底栏等当前剩余来源已完成[逐段核对](docs/legal/来源与许可核对.md)，保留Apache示例、KernelSU参考及其他上游归属；原许可和历史说明见[第三方来源与许可](THIRD_PARTY_NOTICES.md)。兼容模块采用其自身GPL-3.0许可。
