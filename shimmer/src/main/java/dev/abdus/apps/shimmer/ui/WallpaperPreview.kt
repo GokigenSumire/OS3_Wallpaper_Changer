@@ -57,7 +57,7 @@ fun WallpaperPreview(
                     override fun onSurfaceDimensionsChanged(width: Int, height: Int) {
                         // Not used in preview
                     }
-                })
+                }, context.applicationContext)
                 renderer.setEffectTransitionDuration(2000)
                 val adapter = ShimmerRendererAdapter(renderer)
                 setRenderer(adapter)

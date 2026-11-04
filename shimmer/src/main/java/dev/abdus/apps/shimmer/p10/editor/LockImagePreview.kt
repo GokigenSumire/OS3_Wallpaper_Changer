@@ -61,7 +61,7 @@ internal class LockImagePreview(
         override fun onSurfaceDimensionsChanged(width: Int, height: Int) {
             loader.setViewportSize(width, height)
         }
-    })
+    }, context.applicationContext)
 
     init {
         setBackgroundColor(Color.BLACK)
@@ -168,12 +168,14 @@ internal class LockImagePreview(
     }
 
     override fun resumePreview() {
+        renderer.setMediaPlaybackAllowed(true)
         if (closed || !paused) return
         paused = false
         surface.onResume()
     }
 
     override fun pausePreview() {
+        renderer.setMediaPlaybackAllowed(false)
         if (paused) return
         paused = true
         generation++
@@ -190,6 +192,7 @@ internal class LockImagePreview(
     }
 
     override fun closePreview() {
+        renderer.setMediaPlaybackAllowed(false)
         if (closed) return
         pausePreview()
         closed = true

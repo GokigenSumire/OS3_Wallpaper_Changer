@@ -62,10 +62,7 @@ fun SettingsScreen(
         modifier = modifier,
         containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                title = { Text("设置") },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
+            dev.abdus.apps.shimmer.ui.navigation.WallpaperPageTopAppBar(title = "设置")
         }
     ) { paddingValues ->
         if (uiState.isLoading) {
@@ -87,7 +84,7 @@ fun SettingsScreen(
                     .padding(tabContentPadding()),
                 verticalArrangement = Arrangement.spacedBy(Spacing.l)
             ) {
-                // P9-SETTINGS-02：调度已移到特效页，这里不再重复
+                Text("应用外观 · 全局", style = MaterialTheme.typography.titleMedium)
                 // 外观设置卡片
                 AppearanceCard(
                     themeMode = uiState.themeMode,
@@ -102,6 +99,8 @@ fun SettingsScreen(
                     onBottomBarAlphaChange = { viewModel.setBottomBarAlpha(it) },
                     onFloatingBottomBarToggle = { viewModel.toggleFloatingBottomBar(it) }
                 )
+
+                Text("系统兼容", style = MaterialTheme.typography.titleMedium)
 
                 CompatModuleCard(
                     status = compatStatus,
@@ -125,8 +124,10 @@ fun SettingsScreen(
                     onStaticAcceptanceToggle = { viewModel.toggleStaticAcceptance(it) },
                     onDiagnosticsClick = { LegacyPages.openDiagnostics(context) },
                     onLockCapabilityClick = { context.startActivity(Intent(context, CapabilityActivity::class.java)) },
-                    onAboutClick = { showAbout = true }
                 )
+                OutlinedButton(onClick = { showAbout = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("关于与版本")
+                }
             }
         }
     }
@@ -160,15 +161,8 @@ private fun CompatModuleCard(
                 },
                 style = MaterialTheme.typography.bodyLarge,
             )
-            Text(
-                "主壁纸无需 Root 或 LSPosed。仅桌面不转发手势时，按需安装兼容模块。",
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-                "模块需已有 Root／LSPosed，仅选“系统框架”。安装不等于生效；开启后持续运行、重启恢复，关闭时安全恢复。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text("可选：需Root／LSPosed，作用域为系统框架。", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (status.availability == CompatModuleEntry.Availability.INSTALLED && !status.canOpen) {
                 Text("模块入口不可用，请检查模块是否被停用。", style = MaterialTheme.typography.bodyMedium)
             }
@@ -191,7 +185,6 @@ private fun AdvancedCard(
     onStaticAcceptanceToggle: (Boolean) -> Unit,
     onDiagnosticsClick: () -> Unit,
     onLockCapabilityClick: () -> Unit,
-    onAboutClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -232,7 +225,7 @@ private fun AdvancedCard(
                 }
 
                 TextButton(onClick = onLockCapabilityClick, modifier = Modifier.fillMaxWidth()) {
-                    Text("P10 独立锁屏能力确认", style = MaterialTheme.typography.bodyLarge)
+                    Text("锁屏能力检查", style = MaterialTheme.typography.bodyLarge)
                 }
 
             // 诊断按钮：打开 P0 诊断页
@@ -248,18 +241,6 @@ private fun AdvancedCard(
                 }
             }
 
-            // 关于按钮
-            TextButton(
-                onClick = onAboutClick,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Start
-                ) {
-                    Text("关于", style = MaterialTheme.typography.bodyLarge)
-                }
-            }
             }
         }
     }

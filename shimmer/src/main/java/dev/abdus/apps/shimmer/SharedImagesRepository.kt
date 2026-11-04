@@ -16,7 +16,7 @@ class SharedImagesRepository(
 ) {
     private val resolver get() = context.contentResolver
 
-    suspend fun saveSharedImages(uris: List<Uri>): Result<Int> = runCatching {
+    suspend fun saveSharedImages(uris: List<Uri>): Result<Int> = dev.abdus.apps.shimmer.media.MediaCopy.result {
         val targetFolderUri = SharedFolderResolver.getEffectiveSharedUri(preferences)
         var count = 0
         
@@ -35,7 +35,7 @@ class SharedImagesRepository(
         count
     }
 
-    private fun saveToFolder(folderUri: Uri, sourceUri: Uri) {
+    private suspend fun saveToFolder(folderUri: Uri, sourceUri: Uri) {
         val tree = DocumentFile.fromTreeUri(context, folderUri)
             ?: throw IOException("Invalid folder URI")
 
@@ -45,10 +45,12 @@ class SharedImagesRepository(
         
         // DocumentFile.createFile appends (1) if it exists
         val target = tree.createFile(metadata.mimeType, metadata.name) ?: throw IOException("Failed to create file")
-        copyFile(sourceUri, target.uri)
+        check(!dev.abdus.apps.shimmer.media.MediaCopy.sameDocument(sourceUri, target.uri)) { "Refusing to overwrite original media" }
+        try { copyFile(sourceUri, target.uri) }
+        catch (failure: Exception) { runCatching { target.delete() }; throw failure }
     }
 
-    private fun saveToMediaStore(sourceUri: Uri) {
+    private suspend fun saveToMediaStore(sourceUri: Uri) {
         val metadata = extractMetadata(sourceUri)
         
         val targetUri = insertPendingFile(metadata.name, metadata.mimeType)
@@ -62,10 +64,10 @@ class SharedImagesRepository(
         }
     }
 
-    private fun copyFile(source: Uri, target: Uri) {
+    private suspend fun copyFile(source: Uri, target: Uri) {
         resolver.openInputStream(source)?.use { input ->
             resolver.openOutputStream(target, "w")?.use { output ->
-                input.copyTo(output)
+                dev.abdus.apps.shimmer.media.MediaCopy.transfer(input, output)
             } ?: throw IOException("Cannot open output stream")
         } ?: throw IOException("Cannot open input stream")
     }
@@ -90,10 +92,10 @@ class SharedImagesRepository(
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
             put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-            put(MediaStore.Images.Media.RELATIVE_PATH, SharedFolderResolver.getDefaultRelativePath())
+            put(MediaStore.Images.Media.RELATIVE_PATH, if (mimeType.startsWith("video/")) SharedFolderResolver.getDefaultVideoRelativePath() else SharedFolderResolver.getDefaultRelativePath())
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
-        return resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        return resolver.insert(if (mimeType.startsWith("video/")) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore entry")
     }
 

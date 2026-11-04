@@ -26,8 +26,8 @@ android {
         applicationId "personal.wallpaper.os3"
         minSdkVersion libs.versions.minSdk.get().toInteger()
         targetSdkVersion libs.versions.targetSdk.get().toInteger()
-        versionCode 94
-        versionName '1.2.6-p10-input-priority'
+        versionCode 102
+        versionName '1.3.4-p11-header'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 
@@ -116,6 +116,8 @@ dependencies {
     implementation libs.composeUiToolingPreview
     implementation "androidx.compose.material:material-icons-extended"
     implementation 'io.coil-kt:coil-compose:2.6.0'
+    implementation 'io.coil-kt:coil-video:2.6.0'
+    implementation 'androidx.media3:media3-exoplayer:1.11.1'
     implementation 'androidx.documentfile:documentfile:1.0.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0'
     

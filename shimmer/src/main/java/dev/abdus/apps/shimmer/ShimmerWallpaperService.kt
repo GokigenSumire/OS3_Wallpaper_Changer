@@ -378,13 +378,33 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             LockEngineHostRegistry.refresh()
         }
 
+        private val presentationEpoch = java.util.concurrent.atomic.AtomicLong()
+        override fun onPresentationInvalidated() {
+            presentationEpoch.incrementAndGet()
+            lastPresentedLockToken = null
+            if (wallpaperTarget == WallpaperTarget.LOCK && !isPreview) scope.launch { LockEngineHostRegistry.refresh() }
+        }
+
+        override fun onMediaFrameState(imageId: String, presentationToken: Any, state: dev.abdus.apps.shimmer.media.MediaFrameState?) {
+            val set = cachedImageSet ?: return
+            if (isPreview || set !== presentationToken || set.id != imageId) return
+            val entry = dev.abdus.apps.shimmer.media.MediaPlaybackStatus.Entry(
+                set.mediaClip?.kind ?: dev.abdus.apps.shimmer.media.MediaKind.IMAGE, state)
+            val store = dev.abdus.apps.shimmer.media.MediaPlaybackStatus
+            if (store.states.value[wallpaperTarget] != entry) {
+                store.record(wallpaperTarget, entry)
+                P0Diagnostics.event(diagnosticId, "P11_MEDIA_PRESENTED", "kind=${entry.kind} state=${state ?: "IMAGE"}")
+            }
+        }
+
         override fun onImagePresented(imageId: String, presentationToken: Any) {
             if (wallpaperTarget != WallpaperTarget.LOCK || !diagnosticAlive || isPreview) return
+            val epoch = presentationEpoch.get()
             if (nativeLockRequest == null && lastPresentedLockToken === presentationToken &&
                 LockEngineHostRegistry.snapshot().ready) return
             scope.launch {
                 if (wallpaperTarget != WallpaperTarget.LOCK || isPreview || !routeAllowed ||
-                    !engineVisible || presentationToken !== lockPresentationToken) return@launch
+                    !engineVisible || presentationToken !== lockPresentationToken || presentationEpoch.get() != epoch) return@launch
                 lastPresentedLockToken = presentationToken
                 LockEngineHostRegistry.refresh()
                 val request = nativeLockRequest ?: return@launch
@@ -514,7 +534,8 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             if (runtimeInitialized || routeRevoked || !routeAllowed) return
             runtimeInitialized = true
             Log.d(TAG, "Engine onCreate: initializing renderer and resources")
-            renderer = ShimmerRenderer(this)
+            renderer = ShimmerRenderer(this, this@ShimmerWallpaperService.applicationContext)
+            sampleMediaKeyguard()
             // Transition diagnostics come from the home-screen engine only, never from previews.
             if (!isPreview) renderer?.transitionStats = if (wallpaperTarget == WallpaperTarget.HOME) TransitionStats.shared else TransitionStats()
             setEGLContextClientVersion(3)
@@ -530,7 +551,10 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             playbackSnapshotStore.registerListener(playbackSnapshotListener)
             // Old shortcut actions have no target. They must never control both domains.
             if (!isPreview && wallpaperTarget == WallpaperTarget.HOME) Actions.registerReceivers(this@ShimmerWallpaperService, shortcutReceiver)
-            registerReceiver(screenUnlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT))
+            registerReceiver(screenUnlockReceiver, IntentFilter(Intent.ACTION_USER_PRESENT).apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+            })
             if (!isPreview) {
                 // LOCK cannot use the transparent HOME editor after secure unlock.
                 if (wallpaperTarget == WallpaperTarget.HOME) LiveEditBridge.register(diagnosticId, this, wallpaperTarget)
@@ -931,6 +955,10 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             }
             val oldSet = cachedImageSet
             cachedImageSet = newSet
+            if (!isPreview) dev.abdus.apps.shimmer.media.MediaPlaybackStatus.record(wallpaperTarget,
+                dev.abdus.apps.shimmer.media.MediaPlaybackStatus.Entry(
+                    newSet.mediaClip?.kind ?: dev.abdus.apps.shimmer.media.MediaKind.IMAGE,
+                    newSet.mediaClip?.let { dev.abdus.apps.shimmer.media.MediaFrameState.PREPARING }))
             if (wallpaperTarget == WallpaperTarget.LOCK) lockPresentationToken = newSet
             // From this exact point the Engine owns the image, even if later setup fails.
             onOwnershipAcquired?.invoke()
@@ -1416,6 +1444,9 @@ open class ShimmerWallpaperService : GLWallpaperService() {
         }
 
         override fun onVisibilityChanged(visible: Boolean) {
+            if (!visible) renderer?.setMediaPlaybackAllowed(false)
+            sampleMediaKeyguard()
+            renderer?.setMediaPlaybackAllowed(visible && routeAllowed)
             super.onVisibilityChanged(visible && routeAllowed)
             engineVisible = visible && routeAllowed
             if (!visible) nativeLockRequest?.let { finishNativeLock(it, "CANCELLED") }
@@ -1528,6 +1559,9 @@ open class ShimmerWallpaperService : GLWallpaperService() {
         private val screenUnlockReceiver =
             object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
+                    if (intent.action == Intent.ACTION_SCREEN_OFF) renderer?.setMediaPlaybackAllowed(false)
+                    if (intent.action == Intent.ACTION_USER_PRESENT) sampleMediaKeyguard(false)
+                    else if (intent.action == Intent.ACTION_SCREEN_OFF || intent.action == Intent.ACTION_SCREEN_ON) sampleMediaKeyguard()
                     if (intent.action == Intent.ACTION_USER_PRESENT) {
                         if (preferences.isBlurOnScreenLockEnabled() &&
                             !preferences.isUnblurOnUnlockEnabled()
@@ -1540,6 +1574,12 @@ open class ShimmerWallpaperService : GLWallpaperService() {
                     }
                 }
             }
+
+        private fun sampleMediaKeyguard(knownLocked: Boolean? = null) {
+            if (isPreview || !routeAllowed) return
+            val locked = knownLocked ?: getSystemService(android.app.KeyguardManager::class.java)?.isKeyguardLocked ?: return
+            renderer?.observeMediaKeyguard(locked)
+        }
 
         private fun applyNextDuotone() {
             val nextIndex = (preferences.getDuotonePresetIndex() + 1) % DUOTONE_PRESETS.size
@@ -2127,6 +2167,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
         }
 
         override fun onSurfaceDestroyed(h: SurfaceHolder) {
+            renderer?.setMediaPlaybackAllowed(false)
             lastPresentedLockToken = null
             rememberSelectedImageForLifecycle()
             rendererReady = false
@@ -2139,6 +2180,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
         }
 
         override fun onDestroy() {
+            renderer?.setMediaPlaybackAllowed(false)
             diagnosticAlive = false
             if (wallpaperTarget == WallpaperTarget.LOCK) {
                 nativeLockRequest?.let { finishNativeLock(it, "CANCELLED") }

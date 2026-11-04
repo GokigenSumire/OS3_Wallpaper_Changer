@@ -18,6 +18,8 @@ object SharedFolderResolver {
 
     fun getDefaultRelativePath(): String = DEFAULT_RELATIVE_PATH
 
+    fun getDefaultVideoRelativePath(): String = "Movies/Shimmer/Shared/"
+
     fun getDefaultDisplayPath(): String = DEFAULT_DISPLAY_PATH
 
     fun isDefaultSharedUri(uri: Uri): Boolean {

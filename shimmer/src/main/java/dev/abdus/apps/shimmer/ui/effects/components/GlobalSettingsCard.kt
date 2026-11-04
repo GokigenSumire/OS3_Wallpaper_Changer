@@ -38,7 +38,7 @@ fun GlobalSettingsCard(
             verticalArrangement = Arrangement.spacedBy(Spacing.m)
         ) {
             Text(
-                text = "本域默认",
+                text = "画面适配",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )

@@ -18,6 +18,8 @@ object FavoritesFolderResolver {
 
     fun getDefaultRelativePath(): String = DEFAULT_RELATIVE_PATH
 
+    fun getDefaultVideoRelativePath(): String = "Movies/Shimmer/Favorites/"
+
     fun getDefaultDisplayPath(): String = DEFAULT_DISPLAY_PATH
 
     fun isDefaultFavoritesUri(uri: Uri): Boolean {

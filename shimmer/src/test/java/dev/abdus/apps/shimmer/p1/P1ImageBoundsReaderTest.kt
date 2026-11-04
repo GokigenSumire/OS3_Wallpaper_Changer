@@ -21,6 +21,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -33,6 +34,67 @@ import org.robolectric.shadows.ShadowContentResolver
 @Config(sdk = [34])
 class P1ImageBoundsReaderTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
+
+    @Test
+    fun boundedVideoMetadataIsReadBeforeTheImageStreamClosesItsDescriptor() {
+        val provider = provider(asset(byteArrayOf(1, 2, 3, 4, 5, 6), 2, 3))
+        val decoder = RecordingDecoder(streamDimensions = null, readStreamBytes = true)
+        var videos = 0
+        val reader = P1ImageBoundsReader(context.contentResolver, decoder, videoDecoder = { current ->
+            assertTrue(current.fileDescriptor.valid())
+            assertEquals(2L, current.startOffset)
+            assertEquals(3L, current.declaredLength)
+            videos++
+            VALID_DIMENSIONS
+        }) { error("bounded stream must not seek") }
+        assertEquals(VALID_DIMENSIONS, reader.read(URI))
+        assertArrayEquals(byteArrayOf(3, 4, 5), decoder.streamBytes)
+        assertEquals(1, videos)
+        assertEquals(1, provider.opens)
+        assertFalse(provider.descriptor!!.valid())
+    }
+
+    @Test
+    fun unboundedVideoFallbackKeepsTheProviderOpenAfterBothImageAttemptsFail() {
+        val provider = provider(asset(byteArrayOf(0, 0, 0, 24, 102, 116, 121, 112)))
+        val decoder = RecordingDecoder(descriptorDimensions = null, streamDimensions = null, readStreamBytes = true)
+        var videos = 0
+        val reader = P1ImageBoundsReader(context.contentResolver, decoder, videoDecoder = { current ->
+            assertTrue(current.fileDescriptor.valid()); videos++; VALID_DIMENSIONS
+        }) { 0L }
+        assertEquals(VALID_DIMENSIONS, reader.read(URI))
+        assertEquals(1, decoder.descriptorCalls)
+        assertEquals(1, decoder.streamCalls)
+        assertEquals(1, videos)
+        assertFalse(provider.descriptor!!.valid())
+    }
+
+    @Test
+    fun aVideoReadThroughTheRealImageProbeIsAcceptedByTheImportValidator() = kotlinx.coroutines.runBlocking {
+        ShadowBitmapFactory.setAllowInvalidImageData(false)
+        val provider = provider(asset("video payload".toByteArray(), 0, 13))
+        val reader = P1ImageBoundsReader(context.contentResolver, videoDecoder = { current ->
+            assertTrue(current.fileDescriptor.valid())
+            P1MetadataValidator.Dimensions(1920, 1080)
+        })
+        val outcome = P1ScanOutcome.Complete(listOf(P1ScannedImage("image:video", "source", URI.toString(), "clip.mp4", "clip.mp4", 13)), 1)
+        val result = P1MetadataValidator.validate(outcome, { reader.read(Uri.parse(it.uri)) }) as P1ScanOutcome.Complete
+        assertEquals(1, result.images.size)
+        assertEquals(1920, result.images.single().width)
+        assertEquals(1080, result.images.single().height)
+        assertEquals(0, result.skippedMetadata)
+        assertFalse(provider.descriptor!!.valid())
+    }
+
+    @Test
+    fun videoFailureStillClosesBothStreamAndAssetAndPropagatesPermission() {
+        val provider = provider(asset(byteArrayOf(1, 2), 0, 2))
+        val failure = SecurityException("video permission revoked")
+        val reader = P1ImageBoundsReader(context.contentResolver, RecordingDecoder(streamDimensions = null),
+            videoDecoder = { assertTrue(it.fileDescriptor.valid()); throw failure })
+        assertSame(failure, runCatching { reader.read(URI) }.exceptionOrNull())
+        assertFalse(provider.descriptor!!.valid())
+    }
 
     @Test
     fun filePathStillReallyDecodesPngBounds() {

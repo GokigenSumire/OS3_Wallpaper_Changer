@@ -72,9 +72,8 @@ fun GalleryScreen(
         modifier = modifier,
         containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                title = { Text("图库") },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+            dev.abdus.apps.shimmer.ui.navigation.WallpaperPageTopAppBar(
+                title = "图库", wallpaperTarget = wallpaperTarget, targetEnabled = interactive,
                 // P9-GALLERY-04：添加来源在新 UI 完成，不再跳转旧 P1 页
                 actions = {
                     IconButton(
@@ -260,7 +259,7 @@ private fun AddSourceDialog(
     var includeSubdirectories by rememberSaveable { mutableStateOf(true) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加图片来源") },
+        title = { Text("添加媒体来源") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
                 Row(
@@ -277,10 +276,10 @@ private fun AddSourceDialog(
                     Text("文件夹目录")
                 }
                 TextButton(onClick = onPickSingle, modifier = Modifier.fillMaxWidth()) {
-                    Text("单张图片")
+                    Text("单项媒体")
                 }
                 TextButton(onClick = onPickMultiple, modifier = Modifier.fillMaxWidth()) {
-                    Text("多张图片")
+                    Text("多项媒体")
                 }
             }
         },
@@ -310,7 +309,7 @@ private fun EmptySourcesState(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "点击右上角 + 按钮添加图片来源",
+                text = "点击右上角 + 按钮添加媒体来源",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

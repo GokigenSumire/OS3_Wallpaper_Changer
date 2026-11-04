@@ -194,8 +194,8 @@ class P1SourcesActivity : ComponentActivity() {
         }
         root.addView(recursiveToggle)
 
-        root.addView(button("选择单张图片") { singlePicker.launch(arrayOf("image/*")) })
-        root.addView(button("选择多张图片") { multiplePicker.launch(arrayOf("image/*")) })
+        root.addView(button("选择单张图片") { singlePicker.launch(arrayOf("image/*", "video/*")) })
+        root.addView(button("选择多张图片") { multiplePicker.launch(arrayOf("image/*", "video/*")) })
         root.addView(button("选择目录并扫描") { directoryPicker.launch(null) })
         root.addView(button("导出 P1 数据快照（URI 脱敏）") {
             exportSnapshot.launch("P1-source-snapshot.json")
@@ -524,8 +524,8 @@ class P1SourcesActivity : ComponentActivity() {
         pendingReauthorization = PendingReauthorization(source.id)
         when (source.kind) {
             P1SourceKind.DIRECTORY_TREE.name -> directoryPicker.launch(null)
-            P1SourceKind.SINGLE_DOCUMENT.name -> singlePicker.launch(arrayOf("image/*"))
-            else -> multiplePicker.launch(arrayOf("image/*"))
+            P1SourceKind.SINGLE_DOCUMENT.name -> singlePicker.launch(arrayOf("image/*", "video/*"))
+            else -> multiplePicker.launch(arrayOf("image/*", "video/*"))
         }
     }
 

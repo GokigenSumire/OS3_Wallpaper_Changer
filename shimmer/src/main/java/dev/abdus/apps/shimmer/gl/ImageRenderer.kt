@@ -12,12 +12,24 @@ import dev.abdus.apps.shimmer.gl.ImageUploadIdentity
 import kotlin.math.ceil
 import kotlin.math.floor
 
-class ImageRenderer {
+class ImageRenderer(
+    private val mediaOwner: dev.abdus.apps.shimmer.media.MediaPlaybackOwner? = null,
+    private val requestRender: () -> Unit = {},
+) {
     private val textures = TextureArray()
     private val uploadIdentity = ImageUploadIdentity()
     // P3 fill layer; owned and released together with the foreground textures (F04).
     private var backgroundTexture = 0
     private var backgroundSource: Bitmap? = null
+    private var video: dev.abdus.apps.shimmer.media.VideoFrameTexture? = null
+    private var clip: dev.abdus.apps.shimmer.media.MediaClip? = null
+    private var videoFailed = false
+    private var maxVideoBlurRadius = 0f
+    val presentationReady: Boolean get() = video?.presentationReady ?: true
+    val mediaState: dev.abdus.apps.shimmer.media.MediaFrameState? get() =
+        if (clip == null) null else if (videoFailed) dev.abdus.apps.shimmer.media.MediaFrameState.FALLBACK_ERROR
+        else video?.let { if (it.showVideo) dev.abdus.apps.shimmer.media.MediaFrameState.VIDEO else it.state }
+    val videoTextureCount: Int get() = if (video == null) 0 else 6
 
     val aspectRatio: Float get() = textures.aspectRatio
     val isEmpty: Boolean get() = textures.isEmpty
@@ -39,9 +51,27 @@ class ImageRenderer {
             textures.allocate(bitmaps)
         }
         loadBackground(imageSet.background)
+        maxVideoBlurRadius = imageSet.blurRadii.lastOrNull() ?: 0f
+        if (clip != imageSet.mediaClip) {
+            video?.dispose(lost = false)
+            video = null
+            clip = imageSet.mediaClip
+            videoFailed = false
+            if (clip != null) {
+                video = runCatching {
+                    dev.abdus.apps.shimmer.media.VideoFrameTexture(checkNotNull(clip), imageSet.width, imageSet.height,
+                        checkNotNull(mediaOwner), requestRender)
+                }.getOrElse { videoFailed = true; null }
+            }
+        }
 
         uploadIdentity.record(imageSet, imageSet.original, imageSet.blurred, imageSet.background)
     }
+
+    fun prepareMediaFrame(blurPercent: Float) { video?.update(blurPercent, maxVideoBlurRadius) }
+    fun freezeMedia() { video?.freeze() }
+    /** CPU/Android-resource cleanup only; used after a lost EGL context. */
+    fun abandon() { video?.dispose(lost = true); video = null; clip = null }
 
     private fun loadBackground(bitmap: Bitmap?) {
         if (bitmap === backgroundSource && backgroundTexture != 0) return
@@ -68,7 +98,8 @@ class ImageRenderer {
         alpha: Float,
     ) {
         if (backgroundTexture == 0 || alpha <= 0f) return
-        fill.draw(backgroundTexture, mvpMatrix, clipToQuad, dimAmount, alpha)
+        val background = video?.takeIf { it.showVideo }?.fillTexture ?: backgroundTexture
+        fill.draw(background, mvpMatrix, clipToQuad, dimAmount, alpha)
     }
 
     fun draw(
@@ -88,19 +119,27 @@ class ImageRenderer {
         if (textures.isEmpty || alpha <= 0f) return
 
         val keyframes = (textures.size - 1).coerceAtLeast(0)
-        val progress = blurPercent * keyframes
+        val live = video?.takeIf { it.showVideo }
+        val progress = if (live == null) blurPercent * keyframes else blurPercent.coerceIn(0f, 1f)
         val lo = floor(progress).toInt().coerceIn(0, keyframes)
         val hi = ceil(progress).toInt().coerceIn(0, keyframes)
-        val mix = progress - lo
+        val mix = if (live == null) progress - lo else 0f
+        val liveTexture = live?.blurredTexture
 
         GLES30.glUseProgram(handles.program)
         setUniforms(handles, mvpMatrix, duotone, dimAmount, grain, grainCounts,
                     touchPoints, touchIntensities, aspectRatio, timeSeconds, mix, alpha)
 
-        textures.bind(lo, 0)
+        if (live == null) textures.bind(lo, 0) else {
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, checkNotNull(liveTexture))
+        }
         GLES30.glUniform1i(handles.uniformTexture0, 0)
 
-        textures.bind(hi, 1)
+        if (live == null) textures.bind(hi, 1) else {
+            GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+            GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, checkNotNull(liveTexture))
+        }
         GLES30.glUniform1i(handles.uniformTexture1, 1)
 
         QuadMesh.draw(handles.attribPosition, handles.attribTexCoords)
@@ -144,6 +183,10 @@ class ImageRenderer {
     }
 
     fun release() {
+        video?.dispose(lost = false)
+        video = null
+        clip = null
+        videoFailed = false
         textures.release()
         releaseBackground()
         uploadIdentity.clear()

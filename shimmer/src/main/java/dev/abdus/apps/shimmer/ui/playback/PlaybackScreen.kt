@@ -4,6 +4,7 @@ import android.os.SystemClock
 import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -65,8 +66,14 @@ fun PlaybackScreen(
     val context = LocalContext.current
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
+    var showPlaybackSettings by rememberSaveable { mutableStateOf(false) }
+    val settingsScrollState = rememberScrollState()
 
     fun returnToTop() {
+        if (showPlaybackSettings) {
+            scrollScope.launch { settingsScrollState.scrollTo(0) }
+            return
+        }
         // 清掉正在处理的定位请求，让旧定位动画不在回顶之后又跳回；后续明确调序仍可正常定位。
         uiState.scrollRequest?.let { viewModel.scrollHandled(it.serial) }
         scrollScope.launch { listState.scrollToItem(0) }
@@ -129,7 +136,8 @@ fun PlaybackScreen(
 
     // P9-ORDER-GROUP-01：滚到当前图片或刚移动的一行；已在屏幕内就不动，免得列表跳来跳去
     val scrollRequest = uiState.scrollRequest
-    LaunchedEffect(scrollRequest?.serial) {
+    LaunchedEffect(scrollRequest?.serial, showPlaybackSettings) {
+        if (showPlaybackSettings) return@LaunchedEffect
         val request = scrollRequest ?: return@LaunchedEffect
         val rowIndex = uiState.queueRows.indexOfFirst { it.key == request.rowKey }
         try {
@@ -148,45 +156,28 @@ fun PlaybackScreen(
         containerColor = Color.Transparent,
         topBar = {
             Column {
-            Box {
-            TopAppBar(
-                title = { Text("播放") },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-                // P9-PLAYBACK-02：重新载入从页内整行按钮移到右上角
+            dev.abdus.apps.shimmer.ui.navigation.WallpaperPageTopAppBar(
+                title = "播放", wallpaperTarget = wallpaperTarget,
                 actions = {
-                    IconButton(
-                        onClick = { viewModel.reloadSources() },
-                        enabled = !busy
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = if (uiState.isReloadingSources) "正在重新载入来源" else "重新载入来源"
-                        )
-                    }
-                }
-            )
-            // 独立叠在顶栏几何中央，位于“播放”右侧；不放进右端 actions 以免挤到刷新旁。
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .width(80.dp)
-                    .height(48.dp)
-                    .combinedClickable(
-                        enabled = !uiState.isLoading,
-                        role = Role.Button,
-                        onClickLabel = "返回播放页顶部",
+                    Box(Modifier.size(48.dp).combinedClickable(
+                        enabled = !uiState.isLoading, role = Role.Button,
+                        onClickLabel = "返回当前播放分区顶部",
                         onDoubleClick = { returnToTop() },
                         onClick = { returnToTop() },
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.KeyboardDoubleArrowUp, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Text("回顶", style = MaterialTheme.typography.labelMedium)
-                }
+                    ), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.KeyboardDoubleArrowUp, contentDescription = "回顶")
+                    }
+                    if (!showPlaybackSettings) IconButton(onClick = { viewModel.reloadSources() }, enabled = !busy) {
+                        Icon(Icons.Default.Refresh,
+                            contentDescription = if (uiState.isReloadingSources) "正在重新载入来源" else "重新载入来源")
+                    }
+                },
+            )
+            TabRow(selectedTabIndex = if (showPlaybackSettings) 1 else 0, containerColor = Color.Transparent) {
+                Tab(selected = !showPlaybackSettings, onClick = { showPlaybackSettings = false }, text = { Text("播放队列") })
+                Tab(selected = showPlaybackSettings, onClick = { showPlaybackSettings = true }, text = { Text("播放设置") })
             }
-            }
-            if (uiState.multiReorder.enabled) {
+            if (uiState.multiReorder.enabled && !showPlaybackSettings) {
                 MultiReorderToolbar(
                     state = uiState.multiReorder,
                     busy = busy,
@@ -200,7 +191,12 @@ fun PlaybackScreen(
             }
         }
     ) { paddingValues ->
-        if (uiState.isLoading) {
+        if (showPlaybackSettings) {
+            Box(Modifier.fillMaxSize().padding(paddingValues)) {
+                PlaybackSettingsPage(wallpaperTarget, scrollState = settingsScrollState,
+                    onClearHistory = { resetManualOrder = false; showClearConfirm = true }, historyEnabled = !busy)
+            }
+        } else if (uiState.isLoading) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -221,6 +217,14 @@ fun PlaybackScreen(
                 verticalArrangement = Arrangement.spacedBy(Spacing.s)
             ) {
                 item(key = "current") { CurrentImageSection(uiState, wallpaperTarget) }
+                item(key = "wallpaper") {
+                    WallpaperSection(
+                        isActiveWallpaper = isActiveWallpaper,
+                        hint = wallpaperHint,
+                        onSetWallpaper = { if (isActiveWallpaper) launchPicker() else showWallpaperConfirm = true },
+                        onOtherRoutes = { showRoutes = true },
+                    )
+                }
                 item(key = "order") {
                     // 播放顺序选择：经 P2 协调器保存，壁纸收到快照变化后按新顺序继续
                     PlayOrderSection(
@@ -230,15 +234,7 @@ fun PlaybackScreen(
                     )
                 }
                 item(key = "status") {
-                    StatusSection(uiState, busy, onClearHistory = { resetManualOrder = false; showClearConfirm = true })
-                }
-                item(key = "wallpaper") {
-                    WallpaperSection(
-                        isActiveWallpaper = isActiveWallpaper,
-                        hint = wallpaperHint,
-                        onSetWallpaper = { if (isActiveWallpaper) launchPicker() else showWallpaperConfirm = true },
-                        onOtherRoutes = { showRoutes = true },
-                    )
+                    StatusSection(uiState, busy)
                 }
                 item(key = "queue-title") {
                     QueueTitleSection(uiState, busy, onLocateCurrent = { viewModel.locateCurrent() },
@@ -458,7 +454,7 @@ private fun CurrentImageSection(uiState: PlaybackUiState, wallpaperTarget: Wallp
 
 /** 与旧 P2 页的状态行相同：生效图片数、来源（P4 规则或普通目录）、静态验收模式。 */
 @Composable
-private fun StatusSection(uiState: PlaybackUiState, busy: Boolean, onClearHistory: () -> Unit) {
+private fun StatusSection(uiState: PlaybackUiState, busy: Boolean) {
     BlurredCard(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(Spacing.m),
@@ -476,9 +472,6 @@ private fun StatusSection(uiState: PlaybackUiState, busy: Boolean, onClearHistor
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (busy) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-            OutlinedButton(onClick = onClearHistory, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                Text("清空播放历史（不删除图片来源）")
-            }
         }
     }
 }
@@ -536,9 +529,9 @@ private fun QueueTitleSection(uiState: PlaybackUiState, busy: Boolean, onLocateC
             }
             Text(
                 text = if (queue.manual) {
-                    "点图片展开操作；播放与调序分别选择，单项可跨组，调序立即保存。"
+                    "点媒体展开操作，调序自动保存。"
                 } else {
-                    "点图片展开操作，再点“播放此图片”。行首为播放序号，随机模式可能与列表先后不同。"
+                    "点媒体展开操作。"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -692,7 +685,7 @@ private fun pickerHint(result: WallpaperUtil.PickerLaunchResult): String = when 
         "系统拒绝或未提供这些入口，请使用“选择其他入口”查看本应用权限设置并反馈系统提示。"
 }
 
-/** 队列行之前的固定区块数：当前图片、顺序、状态、设为壁纸、队列标题。 */
+/** 队列行之前的固定区块数：当前图片、设为壁纸、顺序、状态、队列标题。 */
 private const val LeadingItemCount = 5
 
 /** 与旧 P2 页相同：直达预览发出后这么快就回到本页，视为系统没有打开预览页。 */

@@ -72,9 +72,9 @@ private class ImagePickerImpl : ImagePicker {
         continuation = null
     }
 
-    override suspend fun pickSingle(): List<Uri> = pick(P1SourceIntents.openSingleImage())
+    override suspend fun pickSingle(): List<Uri> = pick(P1SourceIntents.openSingleMedia())
 
-    override suspend fun pickMultiple(): List<Uri> = pick(P1SourceIntents.openMultipleImages())
+    override suspend fun pickMultiple(): List<Uri> = pick(P1SourceIntents.openMultipleMedia())
 
     private suspend fun pick(intent: Intent): List<Uri> = suspendCancellableCoroutine { cont ->
         continuation = cont

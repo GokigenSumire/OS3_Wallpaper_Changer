@@ -41,7 +41,7 @@ fun ScheduleCard(
             verticalArrangement = Arrangement.spacedBy(Spacing.m)
         ) {
             Text(
-                text = "调度",
+                text = "自动切换",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface
             )

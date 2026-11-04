@@ -18,7 +18,7 @@ class FavoritesRepository(
 ) {
     private val resolver get() = context.contentResolver
 
-    suspend fun saveFavorite(sourceUri: Uri): Result<FavoriteSaveResult> = runCatching {
+    suspend fun saveFavorite(sourceUri: Uri): Result<FavoriteSaveResult> = dev.abdus.apps.shimmer.media.MediaCopy.result {
         val originalImage = folderRepository.getImageByUri(sourceUri)
         val metadata = extractMetadata(sourceUri)
         val result = preferences.getFavoritesFolderUri()
@@ -62,7 +62,7 @@ class FavoritesRepository(
             } ?: FileMetadata("shimmer.$extension", null, mimeType, extension)
     }
 
-    private fun saveToFolder(folderUri: Uri, sourceUri: Uri, metadata: FileMetadata): FavoriteSaveResult {
+    private suspend fun saveToFolder(folderUri: Uri, sourceUri: Uri, metadata: FileMetadata): FavoriteSaveResult {
         val tree = DocumentFile.fromTreeUri(context, folderUri)
             ?: throw IOException("Invalid folder URI")
 
@@ -71,11 +71,13 @@ class FavoritesRepository(
         // DocumentFile.createFile typically appends (1) if it exists on standard providers.
         val target = tree.createFile(metadata.mimeType, metadata.name) ?: throw IOException("Failed to create file")
 
-        copyFile(sourceUri, target.uri)
+        check(!dev.abdus.apps.shimmer.media.MediaCopy.sameDocument(sourceUri, target.uri)) { "Refusing to overwrite original media" }
+        try { copyFile(sourceUri, target.uri) }
+        catch (failure: Exception) { runCatching { target.delete() }; throw failure }
         return FavoriteSaveResult(target.uri, target.name ?: metadata.name)
     }
 
-    private fun saveToMediaStore(sourceUri: Uri, metadata: FileMetadata): FavoriteSaveResult {
+    private suspend fun saveToMediaStore(sourceUri: Uri, metadata: FileMetadata): FavoriteSaveResult {
         val targetUri = insertPendingFile(metadata.name, metadata.mimeType)
 
         return try {
@@ -97,10 +99,10 @@ class FavoritesRepository(
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
             put(MediaStore.Images.Media.MIME_TYPE, mimeType)
-            put(MediaStore.Images.Media.RELATIVE_PATH, FavoritesFolderResolver.getDefaultRelativePath())
+            put(MediaStore.Images.Media.RELATIVE_PATH, if (mimeType.startsWith("video/")) FavoritesFolderResolver.getDefaultVideoRelativePath() else FavoritesFolderResolver.getDefaultRelativePath())
             put(MediaStore.Images.Media.IS_PENDING, 1)
         }
-        return resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        return resolver.insert(if (mimeType.startsWith("video/")) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IOException("Failed to create MediaStore entry")
     }
 
@@ -110,10 +112,10 @@ class FavoritesRepository(
         }, null, null)
     }
 
-    private fun copyFile(source: Uri, target: Uri) {
+    private suspend fun copyFile(source: Uri, target: Uri) {
         resolver.openInputStream(source)?.use { input ->
             resolver.openOutputStream(target, "w")?.use { output ->
-                input.copyTo(output)
+                dev.abdus.apps.shimmer.media.MediaCopy.transfer(input, output)
             } ?: throw IOException("Cannot open output stream")
         } ?: throw IOException("Cannot open input stream")
     }

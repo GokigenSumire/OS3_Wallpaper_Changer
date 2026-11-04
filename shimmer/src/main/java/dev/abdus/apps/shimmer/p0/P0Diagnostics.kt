@@ -15,7 +15,9 @@ import dev.abdus.apps.shimmer.BuildConfig
 import dev.abdus.apps.shimmer.WallpaperPreferences
 import java.util.concurrent.atomic.AtomicInteger
 
-class P0Application : Application() {
+class P0Application : Application(), coil.ImageLoaderFactory {
+    override fun newImageLoader(): coil.ImageLoader = coil.ImageLoader.Builder(this)
+        .components { add(dev.abdus.apps.shimmer.media.BudgetedVideoDecoderFactory()) }.build()
     override fun onCreate() {
         super.onCreate()
         P0Diagnostics.initialize(this)

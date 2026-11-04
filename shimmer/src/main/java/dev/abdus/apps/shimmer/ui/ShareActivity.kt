@@ -19,7 +19,7 @@ class ShareActivity : ComponentActivity() {
         val action = intent.action
         val type = intent.type
 
-        if (type?.startsWith("image/") == true) {
+        if (type?.startsWith("image/") == true || type?.startsWith("video/") == true) {
             when (action) {
                 Intent.ACTION_SEND -> {
                     val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)

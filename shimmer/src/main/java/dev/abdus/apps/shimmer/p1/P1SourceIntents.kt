@@ -18,6 +18,15 @@ object P1SourceIntents {
         putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
     }
 
+    fun openSingleMedia(): Intent = openSingleImage().apply {
+        type = "*/*"
+        putExtra(Intent.EXTRA_MIME_TYPES, arrayOf(IMAGE_MIME, "video/*"))
+    }
+
+    fun openMultipleMedia(): Intent = openSingleMedia().apply {
+        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+    }
+
     fun openDirectory(): Intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
     }

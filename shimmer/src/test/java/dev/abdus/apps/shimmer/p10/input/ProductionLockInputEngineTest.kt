@@ -56,6 +56,18 @@ import kotlin.coroutines.CoroutineContext
 @Config(sdk = [34], application = Application::class, shadows = [ProductionLockInputEngineTest.FlagsShadow::class])
 @LooperMode(LooperMode.Mode.PAUSED)
 class ProductionLockInputEngineTest {
+    @Test fun lostContextRevokesPresentationAndRejectsItsQueuedFrameReceipt() {
+        set(engine, "lastPresentedLockToken", null)
+        engine.onImagePresented(A, initial)
+        engine.onPresentationInvalidated()
+        dispatcher.drain()
+        assertEquals("UNKNOWN_STATE", target.state().reason)
+        assertNull(field<Any?>(engine, "lastPresentedLockToken"))
+        engine.onImagePresented(A, initial)
+        dispatcher.drain()
+        assertTrue(target.state().ready)
+    }
+
     @Test fun presentationDiagnosticsDistinguishDirectionFromUnchangedImage() {
         val ledger = dev.abdus.apps.shimmer.p10.editor.LockEditDiagnosticLedger().also { it.openOwner("owner") }
         val cases = listOf(

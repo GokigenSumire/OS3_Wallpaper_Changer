@@ -69,12 +69,13 @@ fun AppearanceTransparencyCard(
                 onValueChange = onBottomBarAlphaChange,
             )
 
-            Text(
-                text = "透明度调得很低时，文字可能难以辨认。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
+            if (minOf(settings.scrimAlpha, settings.cardAlpha, settings.bottomBarAlpha) < 0.2f) {
+                Text(
+                    text = "透明度调得很低时，文字可能难以辨认。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             SwitchRow(
                 label = "悬浮底栏",
                 checked = settings.floatingBottomBarEnabled,

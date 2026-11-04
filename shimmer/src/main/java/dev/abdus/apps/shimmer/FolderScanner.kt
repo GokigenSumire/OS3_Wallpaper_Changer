@@ -142,39 +142,29 @@ private class DocumentScanner(private val context: Context) : ImageScanner {
 
 private class MediaStoreScanner(private val context: Context) : ImageScanner {
     override fun scan(uri: Uri, existingFiles: Map<Uri, Long?>?, checkActive: () -> Unit): List<ScannedImage> {
-        val projection = arrayOf(
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.WIDTH,
-            MediaStore.Images.Media.HEIGHT,
-            MediaStore.Images.Media.SIZE
-        )
-        val selection = "${MediaStore.Images.Media.RELATIVE_PATH}=?"
-        val selectionArgs = arrayOf(FavoritesFolderResolver.getDefaultRelativePath())
-
-        return context.contentResolver.query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            selection,
-            selectionArgs,
-            "${MediaStore.Images.Media.DATE_ADDED} DESC",
-        )?.use { cursor ->
-            val idIdx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val widthIdx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH)
-            val heightIdx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
-            val sizeIdx = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
-            buildList {
-                while (cursor.moveToNext()) {
-                    checkActive()
-                    val id = cursor.getLong(idIdx)
-                    val fileUri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
-                    val size = cursor.getLong(sizeIdx).takeIf { it > 0 }
-                    
-                    val width = cursor.getInt(widthIdx).takeIf { it > 0 }
-                    val height = cursor.getInt(heightIdx).takeIf { it > 0 }
-                    add(ScannedImage(fileUri, width, height, size))
+        val shared = SharedFolderResolver.isDefaultSharedUri(uri)
+        val imagePath = if (shared) SharedFolderResolver.getDefaultRelativePath() else FavoritesFolderResolver.getDefaultRelativePath()
+        val videoPath = if (shared) SharedFolderResolver.getDefaultVideoRelativePath() else FavoritesFolderResolver.getDefaultVideoRelativePath()
+        val collections = listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI to imagePath,
+            MediaStore.Video.Media.EXTERNAL_CONTENT_URI to videoPath)
+        return buildList {
+            for ((collection, path) in collections) {
+                checkActive()
+                val projection = arrayOf("_id", "width", "height", "_size")
+                val cursor = context.contentResolver.query(collection, projection, "relative_path=?", arrayOf(path), "date_added DESC")
+                    ?: throw ScanException(ScanFailure.NULL_RESULT)
+                cursor.use {
+                    while (it.moveToNext()) {
+                        checkActive()
+                        val id = it.getLong(it.getColumnIndexOrThrow("_id"))
+                        val width = it.getInt(it.getColumnIndexOrThrow("width")).takeIf { value -> value > 0 }
+                        val height = it.getInt(it.getColumnIndexOrThrow("height")).takeIf { value -> value > 0 }
+                        val size = it.getLong(it.getColumnIndexOrThrow("_size")).takeIf { value -> value > 0 }
+                        add(ScannedImage(ContentUris.withAppendedId(collection, id), width, height, size))
+                    }
                 }
             }
-        } ?: throw ScanException(ScanFailure.NULL_RESULT)
+        }
     }
 }
 
@@ -199,7 +189,7 @@ class FolderScanner(context: Context) {
         }
         return captureScan(checkActive) {
             val scanner = when {
-                FavoritesFolderResolver.isDefaultFavoritesUri(uri) -> mediaStoreScanner
+                FavoritesFolderResolver.isDefaultFavoritesUri(uri) || SharedFolderResolver.isDefaultSharedUri(uri) -> mediaStoreScanner
                 uri.scheme == "file" -> fileScanner
                 else -> documentScanner
             }
@@ -254,7 +244,9 @@ class FolderScanner(context: Context) {
             } ?: throw ScanException(ScanFailure.METADATA_DECODE)
         }
         if (options.outWidth <= 0 || options.outHeight <= 0) {
-            throw ScanException(ScanFailure.METADATA_DECODE)
+            val video = runCatching { dev.abdus.apps.shimmer.media.MediaProbe.videoInfo(context.contentResolver, uri) }.getOrNull()
+                ?: throw ScanException(ScanFailure.METADATA_DECODE)
+            return video.width to video.height
         }
         return options.outWidth to options.outHeight
     }

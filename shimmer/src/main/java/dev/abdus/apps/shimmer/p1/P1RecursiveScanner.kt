@@ -89,6 +89,7 @@ class P1RecursiveScanner(
 
         fun defaultIsImage(node: P1TreeNode): Boolean {
             if (node.isDirectory) return false
+            if (dev.abdus.apps.shimmer.media.MediaFileTypes.isVideo(node.name, node.mimeType)) return true
             if (node.mimeType?.startsWith("image/", ignoreCase = true) == true) return true
             return node.name.substringAfterLast('.', "").lowercase() in imageExtensions
         }

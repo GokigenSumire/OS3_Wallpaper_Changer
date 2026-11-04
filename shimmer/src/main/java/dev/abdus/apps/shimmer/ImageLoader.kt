@@ -21,6 +21,9 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlin.math.ceil
 import kotlin.math.max
+import dev.abdus.apps.shimmer.media.MediaClip
+import dev.abdus.apps.shimmer.media.MediaKind
+import dev.abdus.apps.shimmer.media.MediaProbe
 
 class ImageLoader(
     private val contentResolver: ContentResolver,
@@ -62,8 +65,25 @@ class ImageLoader(
      */
     suspend fun loadFromUri(uri: Uri, blurAmount: Float, transform: ImageTransform? = null, adaptFit: Boolean = false): ImageSet? {
         currentCoroutineContext().ensureActive()
+        var clip: MediaClip? = null
         val decoded = try {
-            decodeOrientedFromUri(uri, transform, adaptFit)
+            val still = decodeOrientedFromUri(uri, transform, adaptFit)
+            if (still != null) {
+                val motion = MediaProbe.motionPhoto(contentResolver, uri)
+                if (motion != null) {
+                    val video = runCatching { MediaProbe.videoInfo(contentResolver, uri, motion.video) }.getOrNull()
+                    if (video != null) clip = MediaClip(uri.toString(), MediaKind.MOTION_PHOTO, motion.video,
+                        video.durationMs, motion.photoTimestampUs, video.hdr, video.width, video.height)
+                }
+                still
+            } else {
+                val (vw, vh) = viewport()
+                MediaProbe.poster(contentResolver, uri, minOf(vw * 2, maxTextureSize), minOf(vh * 2, maxTextureSize))?.let { poster ->
+                    clip = MediaClip(uri.toString(), MediaKind.VIDEO, durationMs = poster.info.durationMs,
+                        hdr = poster.info.hdr, videoWidth = poster.info.width, videoHeight = poster.info.height)
+                    Decoded(poster.bitmap, poster.info.width, poster.info.height, 1)
+                }
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (e: Exception) {
@@ -74,7 +94,7 @@ class ImageLoader(
             return null
         }
 
-        return prepareImageSet(decoded, blurAmount, id = uri.toString())
+        return prepareImageSet(decoded, blurAmount, id = uri.toString(), mediaClip = clip)
     }
 
     /** Loads the bundled default wallpaper under the same budget. */
@@ -216,7 +236,7 @@ class ImageLoader(
         }
     }
 
-    private suspend fun prepareImageSet(decoded: Decoded, blurAmount: Float, id: String): ImageSet {
+    private suspend fun prepareImageSet(decoded: Decoded, blurAmount: Float, id: String, mediaClip: MediaClip? = null): ImageSet {
         val bitmap = decoded.bitmap
         val maxRadius = ceil(blurAmount * MAX_SUPPORTED_BLUR_RADIUS_PIXELS)
         val context = currentCoroutineContext()
@@ -245,6 +265,7 @@ class ImageLoader(
                 sourceHeight = decoded.sourceHeight,
                 sampleSize = decoded.sampleSize,
                 background = background,
+                mediaClip = mediaClip,
             )
         } catch (failed: Throwable) {
             // Ownership transfers only on return; failed/cancelled preparation releases it here.

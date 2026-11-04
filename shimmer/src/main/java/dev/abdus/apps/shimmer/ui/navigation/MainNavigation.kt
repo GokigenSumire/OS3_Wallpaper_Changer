@@ -84,28 +84,15 @@ fun MainNavigation(
     // 主界面背景与返回手势中缩小页面的背景共用同一张图
     val backdropFrame = rememberBackdropFrame(wallpaperTarget)
 
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalWallpaperHeader provides WallpaperHeaderState(wallpaperTarget) { selectedTargetName = it.name },
+    ) {
     Box(modifier.fillMaxSize()) {
         WallpaperBackdrop(backdropFrame)
         val floatingBar = LocalAppearanceSettings.current.floatingBottomBarEnabled
         Scaffold(
             // 透明容器，透出背后的模糊壁纸
             containerColor = Color.Transparent,
-            topBar = {
-                Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = Spacing.m)) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                        WallpaperTarget.entries.forEach { target ->
-                            FilterChip(
-                                selected = wallpaperTarget == target,
-                                onClick = { selectedTargetName = target.name },
-                                label = { Text(WallpaperTargetUi.label(target)) },
-                            )
-                        }
-                    }
-                    if (selectedDestination == NavigationDestination.Settings) {
-                        Text("设置中的外观与静态验收对桌面、锁屏全局生效。", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            },
             // P9-FLOAT-OVERLAY-01：悬浮形态不进 bottomBar 槽。Scaffold 会为该槽预留等高空间，
             // 页面内容到此为止，于是药丸两侧与下方是 Scaffold 的空白留白区而非透出的页面内容——
             // 用户实测的"仍是在底栏上悬浮，胶囊之外页面内容不能正常显示"就是这个。悬浮形态改由
@@ -187,6 +174,7 @@ fun MainNavigation(
             }
         }
     }
+}
 }
 
 /**

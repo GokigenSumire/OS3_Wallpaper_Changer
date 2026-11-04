@@ -13,18 +13,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.abdus.apps.shimmer.ui.effects.components.GlobalSettingsCard
-import dev.abdus.apps.shimmer.ui.effects.components.IntervalSettingsDialog
 import dev.abdus.apps.shimmer.ui.effects.components.SlideDirectionCard
 import dev.abdus.apps.shimmer.ui.effects.components.TransitionSettingsCard
 import dev.abdus.apps.shimmer.ui.navigation.LegacyPages
 import dev.abdus.apps.shimmer.ui.navigation.tabContentPadding
 import dev.abdus.apps.shimmer.ui.navigation.RefreshOnResume
-import dev.abdus.apps.shimmer.ui.settings.components.ScheduleCard
 import dev.abdus.apps.shimmer.ui.theme.Spacing
 import dev.abdus.apps.shimmer.p10.WallpaperTarget
 import dev.abdus.apps.shimmer.ui.navigation.wallpaperTargetViewModel
 import dev.abdus.apps.shimmer.ui.navigation.WallpaperTargetUi
-import dev.abdus.apps.shimmer.p4.SchedulePageTarget
 
 /**
  * P8.5 特效页面
@@ -39,8 +36,6 @@ fun EffectsScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
-    // P9-EFFECTS-01：间隔设置对话框，取代跳转旧 P4 页
-    var showIntervalDialog by remember { mutableStateOf(false) }
 
     RefreshOnResume { viewModel.refresh() }
 
@@ -48,10 +43,7 @@ fun EffectsScreen(
         modifier = modifier,
         containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                title = { Text("特效") },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
-            )
+            dev.abdus.apps.shimmer.ui.navigation.WallpaperPageTopAppBar(title = "特效")
         }
     ) { paddingValues ->
         if (uiState.isLoading) {
@@ -91,22 +83,6 @@ fun EffectsScreen(
                     onDurationChange = { viewModel.setTransitionDuration(it) }
                 )
 
-                // P9-SETTINGS-02：调度从设置页移到本页，作为其中一栏
-                ScheduleCard(
-                    intervalEnabled = uiState.intervalEnabled,
-                    onIntervalToggle = { viewModel.toggleInterval(it) },
-                    intervalLabel = uiState.intervalLabel,
-                    unlockEnabled = uiState.unlockEnabled,
-                    onUnlockToggle = { viewModel.toggleUnlock(it) },
-                    lockEnabled = uiState.lockEnabled,
-                    onLockToggle = { viewModel.toggleLock(it) },
-                    screenOffEnabled = uiState.screenOffEnabled,
-                    onScreenOffToggle = { viewModel.toggleScreenOff(it) },
-                    onDateRulesClick = { context.startActivity(SchedulePageTarget.createIntent(context, wallpaperTarget)) },
-                    // P9-EFFECTS-01：间隔数值与单位改在本页的对话框里设，不再跳转旧 P4 页
-                    onMoreScheduleClick = { showIntervalDialog = true }
-                )
-
                 // P9-EFFECTS-01：滑动方向原先只在旧 P5 过渡页可改，现迁入本页。
                 // 旧页的过渡诊断（X1～X7 面板）按第三批范围冻结不迁入，仍在旧界面。
                 SlideDirectionCard(
@@ -133,7 +109,7 @@ fun EffectsScreen(
                     Text("编辑当前图片")
                 }
                 else Text(
-                    "锁屏安全编辑将在下一工作包开放；不会进入桌面编辑器。",
+                    "锁屏编辑请在锁屏触发编辑手势，并完成系统认证。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -141,18 +117,7 @@ fun EffectsScreen(
         }
     }
 
-    if (showIntervalDialog) {
-        IntervalSettingsDialog(
-            value = uiState.intervalValue,
-            unit = uiState.intervalUnit,
-            clock = uiState.intervalClock,
-            onDismiss = { showIntervalDialog = false },
-            onConfirm = { v, u, c ->
-                showIntervalDialog = false
-                viewModel.setInterval(v, u, c)
-            },
-        )
-    }
+
 }
 
 /**

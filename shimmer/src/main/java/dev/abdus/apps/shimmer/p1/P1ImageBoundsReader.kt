@@ -18,6 +18,10 @@ import java.io.InputStream
 internal class P1ImageBoundsReader(
     private val resolver: ContentResolver,
     private val decoder: Decoder = AndroidDecoder,
+    private val videoDecoder: ((AssetFileDescriptor) -> P1MetadataValidator.Dimensions?)? =
+        if (decoder === AndroidDecoder) { asset ->
+            dev.abdus.apps.shimmer.media.MediaProbe.videoInfo(asset)?.let { P1MetadataValidator.Dimensions(it.width, it.height) }
+        } else null,
     private val seekDescriptor: (FileDescriptor) -> Long = { fd ->
         Os.lseek(fd, 0L, OsConstants.SEEK_SET)
     },
@@ -30,14 +34,16 @@ internal class P1ImageBoundsReader(
     }
 
     fun read(uri: Uri): P1MetadataValidator.Dimensions? = when (uri.scheme) {
-        "file" -> decoder.file(uri.path).positiveOrNull()
+        "file" -> decoder.file(uri.path).positiveOrNull() ?: videoDecoder?.let { video ->
+            resolver.openAssetFileDescriptor(uri, "r")?.use { video(it).positiveOrNull() }
+        }
         "content" -> resolver.openAssetFileDescriptor(uri, "r")?.let(::readAsset)
         else -> resolver.openInputStream(uri)?.use { decoder.stream(it).positiveOrNull() }
     }
 
     /** 持有并关闭真实 AFD；测试直接覆盖该资源边界，避免 Resolver 重新包装时擦除子类行为。 */
     internal fun readAsset(asset: AssetFileDescriptor): P1MetadataValidator.Dimensions? =
-        asset.use { decodeAsset(it) }
+        asset.use { current -> decodeAsset(current) }
 
     private fun decodeAsset(asset: AssetFileDescriptor): P1MetadataValidator.Dimensions? {
         // getLength() may substitute statSize: only the original declaredLength proves no subrange.
@@ -52,7 +58,10 @@ internal class P1ImageBoundsReader(
                 if (seekToStart(descriptor) != true) return null
             }
         }
-        return asset.createInputStream().use { decoder.stream(it).positiveOrNull() }
+        return asset.createInputStream().use { input ->
+            // AutoCloseInputStream owns the same PFD. Probe video BEFORE use closes it.
+            decoder.stream(input).positiveOrNull() ?: videoDecoder?.invoke(asset).positiveOrNull()
+        }
     }
 
     private fun P1MetadataValidator.Dimensions?.positiveOrNull(): P1MetadataValidator.Dimensions? =

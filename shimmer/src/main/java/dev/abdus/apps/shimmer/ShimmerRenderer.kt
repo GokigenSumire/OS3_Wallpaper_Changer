@@ -19,7 +19,11 @@ import dev.abdus.apps.shimmer.p5.TransitionStats
 import dev.abdus.apps.shimmer.p5.TransitionTimeline
 import java.util.concurrent.atomic.AtomicReference
 
-class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Renderer {
+class ShimmerRenderer(private val callbacks: Callbacks, mediaContext: android.content.Context? = null) : GLWallpaperService.Renderer {
+    private val mediaOwner = mediaContext?.let { dev.abdus.apps.shimmer.media.MediaPlaybackOwner(it, callbacks::requestRender) }
+    private fun newImageRenderer() = ImageRenderer(mediaOwner, callbacks::requestRender)
+    fun setMediaPlaybackAllowed(allowed: Boolean) { mediaOwner?.setAllowed(allowed) }
+    fun observeMediaKeyguard(locked: Boolean) { mediaOwner?.observeKeyguard(locked) }
 
     interface Callbacks {
         fun requestRender()
@@ -28,6 +32,8 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
         fun onSurfaceDimensionsChanged(width: Int, height: Int)
         /** Called only after EGL swapped a frame containing this image; not a decode receipt. */
         fun onImagePresented(imageId: String, presentationToken: Any) {}
+        fun onMediaFrameState(imageId: String, presentationToken: Any, state: dev.abdus.apps.shimmer.media.MediaFrameState?) {}
+        fun onPresentationInvalidated() {}
     }
 
     companion object {
@@ -83,8 +89,8 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
         }
 
         companion object {
-            fun of(imageSet: ImageSet, transform: ImageTransform?) =
-                Layer(ImageRenderer(), imageSet.id, imageSet, transform, imageSet.sourceWidth, imageSet.sourceHeight)
+            fun of(imageSet: ImageSet, transform: ImageTransform?, image: ImageRenderer) =
+                Layer(image, imageSet.id, imageSet, transform, imageSet.sourceWidth, imageSet.sourceHeight)
         }
     }
 
@@ -102,8 +108,8 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
         var fallbackRecorded = false
     }
 
-    private var currentLayer = Layer()
-    private var previousLayer = Layer()
+    private var currentLayer = Layer(image = newImageRenderer())
+    private var previousLayer = Layer(image = newImageRenderer())
     private var pendingImage: PendingImage? = null
     private val pendingParallaxOffset = AtomicReference<Float?>(null)
     private val pendingTouches = AtomicReference<List<TouchData>?>(null)
@@ -247,6 +253,8 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
         val (mvp, prevMvp) = viewportManager.getMvpMatrices()
 
         val blurPercent = state.blurPercent.coerceIn(0f, 1f)
+        currentLayer.image.prepareMediaFrame(blurPercent)
+        previousLayer.image.prepareMediaFrame(blurPercent)
         val effectiveDuotone = state.duotone.copy(
             opacity = if (state.duotoneAlwaysOn) state.duotone.opacity
                      else (state.duotone.opacity * blurPercent)
@@ -378,7 +386,10 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
         (if (previousLayer.image.hasBackground) 1 else 0) + transitionTarget.objectCount
 
     override fun onFramePresented() {
-        if (activeTransition == null) callbacks.onImagePresented(currentLayer.imageId, currentLayer.presentationToken)
+        if (activeTransition == null && currentLayer.image.presentationReady) {
+            callbacks.onImagePresented(currentLayer.imageId, currentLayer.presentationToken)
+            callbacks.onMediaFrameState(currentLayer.imageId, currentLayer.presentationToken, currentLayer.image.mediaState)
+        }
         val now = SystemClock.uptimeMillis()
         if (frameInputUptime > 0L) {
             frameStats?.recordInputLatency(now - frameInputUptime)
@@ -427,7 +438,8 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
 
         val previousAspect = currentLayer.image.aspectRatio
         previousLayer = currentLayer
-        currentLayer = Layer.of(imageSet, transform).apply {
+        previousLayer.image.freezeMedia()
+        currentLayer = Layer.of(imageSet, transform, newImageRenderer()).apply {
             image.load(imageSet)
         }
 
@@ -591,6 +603,7 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
     }
 
     override fun onContextLost() {
+        callbacks.onPresentationInvalidated()
         // CPU-only: the driver reclaims the previous context's GL objects. Placements survive.
         // A transition cut off here is dropped without stats; the next context starts settled.
         program = null
@@ -598,8 +611,10 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
         transitionProgram = null
         transitionTarget.forget()
         activeTransition = null
-        previousLayer = Layer()
-        currentLayer.image = ImageRenderer()
+        previousLayer.image.abandon()
+        currentLayer.image.abandon()
+        previousLayer = Layer(image = newImageRenderer())
+        currentLayer.image = newImageRenderer()
         surfaceCreated = false
         ownerContext = null
         ownerThread = null
@@ -611,7 +626,8 @@ class ShimmerRenderer(private val callbacks: Callbacks) : GLWallpaperService.Ren
         val textures = currentLayer.image.textureCount + previousLayer.image.textureCount
         val fills = (if (currentLayer.image.hasBackground) 1 else 0) + (if (previousLayer.image.hasBackground) 1 else 0)
         val targets = if (transitionTarget.isAllocated) 1 else 0
-        return "programs=$programs textures=$textures fill_textures=$fills transition_targets=$targets"
+        val videos = currentLayer.image.videoTextureCount + previousLayer.image.videoTextureCount
+        return "programs=$programs textures=$textures fill_textures=$fills transition_targets=$targets video_textures=$videos"
     }
 
     private fun requireOwnerContext() {

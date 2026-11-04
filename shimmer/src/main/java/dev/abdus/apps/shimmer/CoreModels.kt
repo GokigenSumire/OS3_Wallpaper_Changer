@@ -80,6 +80,8 @@ data class ImageSet(
     val sampleSize: Int = 1,
     /** P3 blurred fill (≤ 96 px long edge); null when unavailable, then no fill is drawn. */
     val background: Bitmap? = null,
+    /** The original photo remains the poster; the optional clip owns no Bitmap. */
+    val mediaClip: dev.abdus.apps.shimmer.media.MediaClip? = null,
 ) {
     val aspectRatio: Float = if (height == 0) 1f else width.toFloat() / height
 }
