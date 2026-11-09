@@ -10,7 +10,9 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.Gravity
 import android.widget.Button
+import android.widget.FrameLayout
 import androidx.core.view.ViewCompat
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import java.time.Duration
@@ -59,12 +61,13 @@ class P3EditorRevisionActivityTest {
         controller?.let { if (!it.get().isDestroyed) it.pause().stop().destroy() }
         idle(timeout)
         LiveEditBridge.unregister(targetId)
+        org.robolectric.RuntimeEnvironment.setFontScale(1f)
     }
     @Test fun footerKeepsExactlyFourRequestedActionsInOrderWithoutSaveOrCancel() {
         open()
         val footer = tagged("p3-editor-footer") as ViewGroup
         assertEquals(4, footer.childCount)
-        assertEquals(listOf("适配：铺满", "重置", "启用：开", "展开工具"),
+        assertEquals(listOf("展开工具", "重置", "启用：开", "纯预览"),
             (0 until footer.childCount).map { (footer.getChildAt(it) as Button).text.toString() })
         assertFalse(buttons().any { it.text == "保存" || it.text == "取消" || it.text == "上一张" || it.text == "下一张" })
     }
@@ -236,19 +239,180 @@ class P3EditorRevisionActivityTest {
         assertTrue(s.steps.isEmpty()); clickDialog(dialog(), DialogInterface.BUTTON_NEGATIVE)
         assertEquals(listOf(Triple(true, false, null)), s.steps)
     }
-    private fun open(): Session {
+    @Test fun entryUsesFullScreenPreviewAndOnlyTheRestoreButton() {
+        val s = open(showTools = false)
+        layout()
+        assertEquals(View.GONE, tagged("p3-editor-dock").visibility)
+        assertEquals(View.VISIBLE, tagged("p3-editor-restore-tools").visibility)
+        assertEquals(View.GONE, tagged("p3-editor-stats-header").visibility)
+        assertEquals(1220, surface().width)
+        assertEquals(2656, surface().height)
+        assertTrue(s.previews.isEmpty())
+        assertEquals(0, s.cancels)
+    }
+    @Test fun purePreviewHidesAllOverlaysAndRestoringKeepsDraftAndToolSelection() {
+        val s = open(); click("展开工具"); click("上下镜像"); click("调试"); click("显示统计")
+        val count = s.previews.size
+        click("纯预览")
+        assertEquals(View.GONE, tagged("p3-editor-dock").visibility)
+        assertEquals(View.GONE, tagged("p3-editor-stats-header").visibility)
+        click("工具")
+        assertEquals(View.VISIBLE, tagged("p3-editor-tools").visibility)
+        assertEquals(View.VISIBLE, tagged("p3-editor-group-DEBUG").visibility)
+        assertEquals(View.VISIBLE, tagged("p3-editor-stats-header").visibility)
+        assertEquals(count, s.previews.size)
+        activity().onBackPressedDispatcher.onBackPressed()
+        clickDialog(dialog(), DialogInterface.BUTTON_POSITIVE)
+        assertTrue(s.saves.single()!!.mirrorVertical)
+    }
+    @Test fun dockingMovesOnlyOverlayAndRemembersPosition() {
+        val s = open(); layout(); click("移至顶部"); layout()
+        val dock = tagged("p3-editor-dock")
+        val params = dock.layoutParams as FrameLayout.LayoutParams
+        assertEquals(Gravity.TOP, params.gravity and Gravity.VERTICAL_GRAVITY_MASK)
+        assertTrue(params.leftMargin > 0 && params.rightMargin > 0)
+        assertEquals(EditorDockPosition.TOP, EditorPreferences(activity()).dockPosition())
+        assertEquals(0, surface().top); assertEquals(2656, surface().height)
+        click("移至底部")
+        assertEquals(EditorDockPosition.BOTTOM, EditorPreferences(activity()).dockPosition())
+        assertTrue(s.previews.isEmpty()); assertTrue(s.steps.isEmpty())
+    }
+    @Test fun restoreButtonTouchCancelsPendingNavigationWithoutChangingDraft() {
+        val s = open(); click("纯预览"); layout(); taps(2)
+        touchOverlay(tagged("p3-editor-restore-tools")); idle(timeout)
+        assertTrue(s.steps.isEmpty()); assertTrue(s.previews.isEmpty())
+        assertEquals(View.VISIBLE, tagged("p3-editor-dock").visibility)
+    }
+    @Test fun savePolicySavesChangedImageBeforeNextWithoutAConfirmation() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.SAVE); click("左右镜像"); taps(2); idle(timeout)
+        assertEquals(listOf(Triple(true, true, ImageTransform(mirrorHorizontal = true))), s.steps)
+        assertFalse(dialog().isShowing)
+        assertTrue(s.saves.isEmpty())
+    }
+    @Test fun discardPolicyMovesPreviousWithoutSavingTheChangedImage() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.DISCARD); click("上下镜像"); taps(3)
+        assertEquals(listOf(Triple(false, false, null)), s.steps)
+        assertFalse(dialog().isShowing); assertTrue(s.saves.isEmpty())
+    }
+    @Test fun resetUnderSavePolicyStillSendsConfigRemoval() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.SAVE); click("重置"); taps(3)
+        assertEquals(listOf(Triple(false, true, null)), s.steps)
+    }
+    @Test fun resetUnderDiscardPolicyDoesNotRemoveStoredConfig() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.DISCARD); click("重置"); taps(2); idle(timeout)
+        assertEquals(listOf(Triple(true, false, null)), s.steps)
+    }
+    @Test fun unchangedImageUnderSavePolicyDoesNotWriteTransform() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.SAVE); taps(2); idle(timeout)
+        assertEquals(listOf(Triple(true, false, null)), s.steps)
+    }
+    @Test fun switchingPolicyDoesNotChangeBackConfirmationOrLifecycleCancel() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.SAVE); click("左右镜像")
+        activity().onBackPressedDispatcher.onBackPressed()
+        assertEquals("保存修改？", shadowOf(dialog()).title.toString())
+        clickDialog(dialog(), DialogInterface.BUTTON_NEUTRAL)
+        controller!!.pause().stop()
+        assertTrue(s.saves.isEmpty()); assertEquals(1, s.cancels)
+    }
+    @Test fun choosingPolicyNeitherEditsNorNavigatesAndCancelledChoiceKeepsValue() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.DISCARD)
+        click("切换：不存"); clickDialog(dialog(), DialogInterface.BUTTON_NEGATIVE)
+        assertEquals(EditorSwitchSavePolicy.DISCARD, EditorPreferences(activity()).switchSavePolicy())
+        assertTrue(s.previews.isEmpty()); assertTrue(s.steps.isEmpty()); assertTrue(s.saves.isEmpty())
+    }
+    private fun choosePolicy(policy: EditorSwitchSavePolicy) {
+        if (tagged("p3-editor-tools").visibility != View.VISIBLE) click("展开工具")
+        (tagged("p3-editor-switch-save-policy") as Button).performClick()
+        val list = dialog().listView
+        list.performItemClick(null, EditorSwitchSavePolicy.entries.indexOf(policy), 0L)
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(policy, EditorPreferences(activity()).switchSavePolicy())
+    }
+    @Test fun compactDockIsOneRowAndAllOptionsAreInsideExpandedTools() {
+        open()
+        val dock = tagged("p3-editor-dock") as ViewGroup
+        assertEquals(2, dock.childCount)
+        assertEquals(View.GONE, tagged("p3-editor-tools").visibility)
+        assertFalse(tagged("p3-editor-options").isShown)
+        click("展开工具")
+        val options = tagged("p3-editor-options") as ViewGroup
+        assertEquals(3, options.childCount)
+        assertEquals(listOf("移至顶部", "适配：铺满", "切换：询问"),
+            (0 until options.childCount).map { (options.getChildAt(it) as Button).text.toString() })
+        assertEquals("切换图片时：每次询问", tagged("p3-editor-switch-save-policy").contentDescription)
+    }
+
+    @Test fun reopeningRestoresCompactExpandedAndPurePreviewWithoutSavingAnImage() {
+        val first = open()
+        fun reopen(): Session {
+            controller!!.pause().stop().destroy()
+            controller = null
+            return open(showTools = false)
+        }
+        reopen()
+        assertEquals(View.VISIBLE, tagged("p3-editor-dock").visibility)
+        assertEquals(View.GONE, tagged("p3-editor-tools").visibility)
+        click("展开工具")
+        reopen()
+        assertEquals(View.VISIBLE, tagged("p3-editor-dock").visibility)
+        assertEquals(View.VISIBLE, tagged("p3-editor-tools").visibility)
+        click("纯预览")
+        val last = reopen()
+        assertEquals(View.GONE, tagged("p3-editor-dock").visibility)
+        assertEquals(View.VISIBLE, tagged("p3-editor-tools").visibility)
+        click("工具")
+        assertTrue(tagged("p3-editor-options").isShown)
+        assertTrue(first.saves.isEmpty()); assertTrue(last.saves.isEmpty()); assertTrue(last.previews.isEmpty())
+    }
+
+    @Test fun narrowWidthKeepsOptionsAndFooterAlignedWithoutClippedText() {
+        open(); choosePolicy(EditorSwitchSavePolicy.DISCARD)
+        verifyAlignedRows()
+    }
+
+    @Test fun largeSystemFontStillFitsBothSingleLineRows() {
+        org.robolectric.RuntimeEnvironment.setFontScale(1.6f)
+        open(); choosePolicy(EditorSwitchSavePolicy.DISCARD)
+        verifyAlignedRows()
+    }
+
+    private fun verifyAlignedRows() {
+        val density = activity().resources.displayMetrics.density
+        layout((320 * density).toInt(), (800 * density).toInt())
+        listOf("p3-editor-footer", "p3-editor-options").forEach { tag ->
+            val row = tagged(tag) as ViewGroup
+            val controls = (0 until row.childCount).map { row.getChildAt(it) as Button }
+            assertEquals(1, controls.map { it.height }.toSet().size)
+            assertEquals(1, controls.map { it.top }.toSet().size)
+            controls.forEach { button ->
+                assertEquals(1, button.maxLines)
+                val available = button.width - button.compoundPaddingLeft - button.compoundPaddingRight
+                assertTrue("${button.text}: width=${button.width} size=${button.textSize}", button.paint.measureText(button.text.toString()) <= available + 1f)
+                assertTrue(button.height >= (48 * density).toInt())
+            }
+        }
+    }
+    private fun open(showTools: Boolean = true): Session {
         val s = Session()
         LiveEditBridge.register(targetId, object : LiveEditBridge.Target { override fun beginEdit() = s })
         LiveEditBridge.markVisible(targetId)
         controller = Robolectric.buildActivity(P3EditActivity::class.java).setup()
         shadowOf(Looper.getMainLooper()).idle()
+        if (showTools) click("工具")
         return s
     }
     private fun activity() = controller!!.get()
     private fun views(v: View): List<View> = if (v is ViewGroup) listOf(v) + (0 until v.childCount).flatMap { views(v.getChildAt(it)) } else listOf(v)
     private fun tagged(tag: String) = views(activity().window.decorView).first { it.tag == tag }
     private fun buttons() = views(activity().window.decorView).filterIsInstance<Button>()
-    private fun click(label: String) { assertTrue(buttons().first { it.text.toString() == label }.performClick()); shadowOf(Looper.getMainLooper()).idle() }
+    private fun click(label: String) {
+        val target = buttons().first { it.text.toString() == label }
+        if (!target.isShown && label != "工具" && tagged("p3-editor-tools").visibility != View.VISIBLE) {
+            buttons().first { it.text.toString() == "展开工具" }.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+        assertTrue(target.performClick()); shadowOf(Looper.getMainLooper()).idle()
+    }
     private fun surface() = views(activity().window.decorView).first { it.contentDescription?.startsWith("壁纸编辑区") == true }
     private fun idle(ms: Long) = shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(ms))
     private fun taps(count: Int, slightMove: Boolean = false) {
@@ -266,11 +430,11 @@ class P3EditorRevisionActivityTest {
     private fun dialog() = ShadowAlertDialog.getLatestAlertDialog() as AlertDialog
     private fun clickDialog(dialog: AlertDialog, which: Int) { assertTrue(dialog.getButton(which).performClick()); shadowOf(Looper.getMainLooper()).idle() }
     private fun root() = tagged("p3-editor-dock").parent as View
-    private fun layout() {
+    private fun layout(width: Int = 1220, height: Int = 2656) {
         shadowOf(Looper.getMainLooper()).idle()
         // Use the complete window/decor rather than a root larger than its attached ViewRoot.
         val decor = activity().window.decorView
-        repeat(2) { decor.measure(View.MeasureSpec.makeMeasureSpec(1220, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(2656, View.MeasureSpec.EXACTLY)); decor.layout(0, 0, 1220, 2656) }
+        repeat(2) { decor.measure(View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY)); decor.layout(0, 0, width, height) }
     }
     private fun touchOverlay(view: View) {
         val child = IntArray(2).also { view.getLocationOnScreen(it) }

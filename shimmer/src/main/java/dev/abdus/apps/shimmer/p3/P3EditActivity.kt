@@ -9,6 +9,8 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Debug
 import android.os.SystemClock
+import android.text.TextUtils
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -25,6 +27,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import dev.abdus.apps.shimmer.p0.P0Diagnostics
+import dev.abdus.apps.shimmer.R
 import dev.abdus.apps.shimmer.p10.WallpaperTarget
 import java.util.Locale
 import kotlin.math.atan2
@@ -74,7 +77,13 @@ open class P3EditActivity : ComponentActivity() {
     private lateinit var fitButton: Button
     private lateinit var blurButton: Button
     private lateinit var enableButton: Button
+    private lateinit var switchPolicyButton: Button
+    private val editorPreferences by lazy { EditorPreferences(this) }
     private lateinit var dock: LinearLayout
+    private lateinit var restoreTools: Button
+    private lateinit var dockPositionButton: Button
+    private val editorInsets = Rect()
+    private var dockPosition = EditorDockPosition.BOTTOM
     private val draftButtons = mutableListOf<Button>()
 
     /** HOME keeps its original transparent, formal-Engine preview path by default. */
@@ -199,7 +208,8 @@ open class P3EditActivity : ComponentActivity() {
             return EditorOverlayBounds.contains(bounds.left, bounds.top, bounds.right, bounds.bottom,
                 rootScreen[0], rootScreen[1], event.rawX, event.rawY)
         }
-        return (::dock.isInitialized && inside(dock)) || (::statsHeader.isInitialized && inside(statsHeader))
+        return (::dock.isInitialized && inside(dock)) || (::statsHeader.isInitialized && inside(statsHeader)) ||
+            (::restoreTools.isInitialized && inside(restoreTools))
     }
 
     private fun resetNavigationGesture() {
@@ -320,7 +330,25 @@ open class P3EditActivity : ComponentActivity() {
             orientation = LinearLayout.VERTICAL
             tag = "p3-editor-dock"
             isClickable = true
+            background = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = dp(12).toFloat()
+            }
+            clipToOutline = true
         }
+        dockPosition = editorPreferences.dockPosition()
+        dockPositionButton = action("") {
+            if (!stepping && !closing) {
+                dockPosition = dockPosition.opposite()
+                editorPreferences.setDockPosition(dockPosition)
+                updateDockPlacement()
+            }
+        }.apply { tag = "p3-editor-dock-position" }
+        val purePreview = action("纯预览") { setDockVisible(false) }.apply { tag = "p3-editor-pure-preview" }
+        switchPolicyButton = action("") { chooseSwitchSavePolicy() }.apply {
+            tag = "p3-editor-switch-save-policy"
+        }
+        refreshSwitchPolicyLabel()
         val tools = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(EditorPanelPolicy.OVERLAY_COLOR)
@@ -335,6 +363,7 @@ open class P3EditActivity : ComponentActivity() {
             }
         }
         tools.apply {
+            addView(row(dockPositionButton, fitButton, switchPolicyButton).apply { tag = "p3-editor-options" })
             addView(row(*tabs.toTypedArray()))
         }
         fun group(which: EditorToolGroup, vararg rows: LinearLayout) {
@@ -360,7 +389,7 @@ open class P3EditActivity : ComponentActivity() {
         }
         dock.addView(panel, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         showPanel = action("展开工具") { setPanelVisible(!panelExpanded) }.apply { tag = "p3-editor-tool-toggle" }
-        val footer = row(fitButton, draftAction("重置") { reset() }, enableButton, showPanel).apply {
+        val footer = row(showPanel, draftAction("重置") { reset() }, enableButton, purePreview).apply {
             tag = "p3-editor-footer"
             setBackgroundColor(EditorPanelPolicy.OVERLAY_COLOR)
             setPadding(dp(8), dp(4), dp(8), dp(4))
@@ -368,25 +397,35 @@ open class P3EditActivity : ComponentActivity() {
         }
         dock.addView(footer)
         root.addView(dock, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        restoreTools = action("工具") { setDockVisible(true) }.apply {
+            tag = "p3-editor-restore-tools"
+            contentDescription = "显示编辑工具；当前为纯预览"
+        }
+        root.addView(restoreTools, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END))
 
         var insetTop = 0
         var insetBottom = 0
         fun updateToolLimit() {
-            panel.maximumHeightPixels = EditorPanelPolicy.maxToolHeight(root.height, insetTop, insetBottom)
+            val available = (root.height - insetTop - insetBottom - dp(24) - footer.measuredHeight).coerceAtLeast(0)
+            panel.maximumHeightPixels = minOf(EditorPanelPolicy.maxToolHeight(root.height, insetTop, insetBottom), available)
         }
         root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateToolLimit() }
+        dock.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateToolLimit() }
 
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             insetTop = bars.top
             insetBottom = bars.bottom
+            editorInsets.set(bars.left, bars.top, bars.right, bars.bottom)
             statsHeader.setPadding(dp(8) + bars.left, dp(6) + bars.top, dp(8) + bars.right, dp(6))
-            dock.setPadding(bars.left, 0, bars.right, bars.bottom)
+            updateDockPlacement()
             updateToolLimit()
             insets
         }
         selectToolGroup(selectedTool)
-        setPanelVisible(EditorPanelPolicy.INITIAL_EXPANDED)
+        setPanelVisible(editorPreferences.toolsExpanded(), remember = false)
+        updateDockPlacement()
+        setDockVisible(editorPreferences.dockVisible(), remember = false)
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
         refreshState()
@@ -394,14 +433,53 @@ open class P3EditActivity : ComponentActivity() {
 
     private fun row(vararg buttons: Button): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
         isClickable = true
-        buttons.forEach { addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
+        buttons.forEach { addView(it, LinearLayout.LayoutParams(0, dp(EditorPanelPolicy.MIN_TOUCH_DP), 1f)) }
+    }
+
+    private fun updateDockPlacement() {
+        resetNavigationGesture()
+        val vertical = if (dockPosition == EditorDockPosition.TOP) Gravity.TOP else Gravity.BOTTOM
+        dock.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, vertical).apply {
+            leftMargin = editorInsets.left + dp(12)
+            rightMargin = editorInsets.right + dp(12)
+            topMargin = editorInsets.top + dp(12)
+            bottomMargin = editorInsets.bottom + dp(12)
+        }
+        restoreTools.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, vertical or Gravity.END).apply {
+            rightMargin = editorInsets.right + dp(12)
+            topMargin = editorInsets.top + dp(12)
+            bottomMargin = editorInsets.bottom + dp(12)
+        }
+        dockPositionButton.text = if (dockPosition == EditorDockPosition.TOP) "移至底部" else "移至顶部"
+        statsHeader.layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+            if (dockPosition == EditorDockPosition.TOP) Gravity.BOTTOM else Gravity.TOP)
+        statsHeader.setPadding(dp(8) + editorInsets.left,
+            dp(6) + if (dockPosition == EditorDockPosition.BOTTOM) editorInsets.top else 0,
+            dp(8) + editorInsets.right,
+            dp(6) + if (dockPosition == EditorDockPosition.TOP) editorInsets.bottom else 0)
+    }
+
+    private fun setDockVisible(visible: Boolean, remember: Boolean = true) {
+        resetNavigationGesture()
+        dock.visibility = if (visible) View.VISIBLE else View.GONE
+        restoreTools.visibility = if (visible) View.GONE else View.VISIBLE
+        statsHeader.visibility = if (visible) stats.visibility else View.GONE
+        if (remember) editorPreferences.setDockVisible(visible)
     }
 
     private fun action(label: String, onClick: () -> Unit): Button = Button(this).apply {
         text = label
         isAllCaps = false
         textSize = 13f
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        setHorizontallyScrolling(false)
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        setPadding(dp(4), dp(4), dp(4), dp(4))
+        setAutoSizeTextTypeUniformWithConfiguration(9, 13, 1, TypedValue.COMPLEX_UNIT_SP)
         minWidth = 0
         minimumWidth = 0
         minimumHeight = dp(EditorPanelPolicy.MIN_TOUCH_DP)
@@ -417,7 +495,7 @@ open class P3EditActivity : ComponentActivity() {
         if (!stepping && !closing) onClick()
     }.also { draftButtons += it }
 
-    private fun setPanelVisible(visible: Boolean) {
+    private fun setPanelVisible(visible: Boolean, remember: Boolean = true) {
         resetNavigationGesture()
         panelExpanded = visible
         val mode = if (visible) View.VISIBLE else View.GONE
@@ -425,6 +503,7 @@ open class P3EditActivity : ComponentActivity() {
         showPanel.text = if (visible) "收起工具" else "展开工具"
         showPanel.contentDescription = if (visible) "收起编辑工具，保留本次调整" else "展开编辑工具，保留本次调整"
         showPanel.visibility = View.VISIBLE
+        if (remember) editorPreferences.setToolsExpanded(visible)
     }
 
     private fun selectToolGroup(group: EditorToolGroup) {
@@ -488,19 +567,38 @@ open class P3EditActivity : ComponentActivity() {
 
         // Reset is a pending removal of the image config, even if defaults equal the old draft.
         val hasChanges = resetPending || draft != image.original
-        if (!hasChanges) {
-            // No unsaved changes, step directly
-            runStep(forward, saveFirst = false, transform = null)
-        } else {
-            // Ask what to do with unsaved changes
-            showConfirmation(AlertDialog.Builder(this)
-                .setTitle("切换前保存修改？")
-                .setMessage("本次调整尚未保存。")
-                .setNeutralButton("继续编辑", null)
-                .setNegativeButton("放弃并切换") { _, _ -> runStep(forward, saveFirst = false, transform = null) }
-                .setPositiveButton("保存并切换") { _, _ -> runStep(forward, saveFirst = true, transform = if (resetPending) null else draft) }
-            )
+        when (editorPreferences.switchSavePolicy().decide(hasChanges)) {
+            EditorSwitchDecision.SWITCH_WITHOUT_SAVE -> runStep(forward, saveFirst = false, transform = null)
+            EditorSwitchDecision.SAVE_AND_SWITCH -> runStep(forward, saveFirst = true, transform = if (resetPending) null else draft)
+            EditorSwitchDecision.ASK -> {
+                showConfirmation(AlertDialog.Builder(this)
+                    .setTitle("切换前保存修改？")
+                    .setMessage("本次调整尚未保存。")
+                    .setNeutralButton("继续编辑", null)
+                    .setNegativeButton("放弃并切换") { _, _ -> runStep(forward, saveFirst = false, transform = null) }
+                    .setPositiveButton("保存并切换") { _, _ -> runStep(forward, saveFirst = true, transform = if (resetPending) null else draft) }
+                )
+            }
         }
+    }
+
+    private fun refreshSwitchPolicyLabel() {
+        val policy = editorPreferences.switchSavePolicy()
+        switchPolicyButton.text = getString(R.string.editor_switch_policy_label, policy.compactLabel)
+        switchPolicyButton.contentDescription = getString(R.string.editor_switch_policy_description, policy.label)
+    }
+
+    private fun chooseSwitchSavePolicy() {
+        if (stepping || closing || confirmationShowing) return
+        val choices = EditorSwitchSavePolicy.entries
+        showConfirmation(AlertDialog.Builder(this)
+            .setTitle("切换壁纸时的修改")
+            .setSingleChoiceItems(choices.map { it.label }.toTypedArray(), choices.indexOf(editorPreferences.switchSavePolicy())) { dialog, index ->
+                editorPreferences.setSwitchSavePolicy(choices[index])
+                refreshSwitchPolicyLabel()
+                dialog.dismiss()
+            }
+            .setNegativeButton("取消", null))
     }
 
     private fun runStep(forward: Boolean, saveFirst: Boolean, transform: ImageTransform?) {

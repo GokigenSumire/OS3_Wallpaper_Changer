@@ -3,6 +3,7 @@ package dev.abdus.apps.shimmer.database
 import android.app.Application
 import android.content.Context
 import androidx.room.Room
+import androidx.room.RoomDatabase
 import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
@@ -146,7 +147,12 @@ class P1CatalogRevisionTest {
     }
 
     @Test fun migrationRunsAgainstActualExportedV7SchemaAndRoomValidatesV8() = runBlocking {
-        val name = "v51-migrate-${UUID.randomUUID()}"
+        // Windows的sqlite4java还需创建-journal／-wal／-shm，长方法目录与完整UUID会触及路径限制。
+        val name = "m78-${UUID.randomUUID().toString().take(8)}.db"
+        val fixturePath = app.getDatabasePath(name).absolutePath
+        if (File.separatorChar == '\\') {
+            assertTrue("Migration fixture needs space for SQLite sidecars: $fixturePath", fixturePath.length <= 240)
+        }
         val schema = JSONObject(File("schemas/dev.abdus.apps.shimmer.database.ShimmerDatabase/7.json").readText())
             .getJSONObject("database")
         val helper = FrameworkSQLiteOpenHelperFactory().create(SupportSQLiteOpenHelper.Configuration.builder(app)
@@ -165,14 +171,19 @@ class P1CatalogRevisionTest {
                 }
                 override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
             }).build())
-        helper.writableDatabase.execSQL("INSERT INTO sources(id,rootUri,kind) VALUES ('s','file:///s','DIRECTORY_TREE')")
-        helper.writableDatabase.execSQL("INSERT INTO image_records(id,uri,displayName,relativePath) VALUES ('i','file:///i','i','i')")
-        helper.writableDatabase.execSQL("INSERT INTO source_image_links(sourceId,imageId,sortOrder) VALUES ('s','i',42)")
-        helper.close()
+        helper.use {
+            it.writableDatabase.execSQL("INSERT INTO sources(id,rootUri,kind) VALUES ('s','file:///s','DIRECTORY_TREE')")
+            it.writableDatabase.execSQL("INSERT INTO image_records(id,uri,displayName,relativePath) VALUES ('i','file:///i','i','i')")
+            it.writableDatabase.execSQL("INSERT INTO source_image_links(sourceId,imageId,sortOrder) VALUES ('s','i',42)")
+        }
         val migrated = Room.databaseBuilder(app, ShimmerDatabase::class.java, name).allowMainThreadQueries()
+            .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
             .addMigrations(ShimmerDatabase.MIGRATION_7_8).addCallback(P1CatalogRevision.callback).build()
         try {
             assertEquals(8, migrated.openHelper.writableDatabase.version)
+            migrated.openHelper.writableDatabase.query("PRAGMA journal_mode").use {
+                assertTrue(it.moveToFirst()); assertEquals("wal", it.getString(0))
+            }
             assertEquals(42, migrated.p1SourceDao().getLinks("s").single().sortOrder)
             assertEquals("i", migrated.p1SourceDao().getAllImages().single().id)
             assertNotNull(migrated.withTransaction { P1CatalogRevision.readVerified(migrated) })

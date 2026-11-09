@@ -17,6 +17,9 @@ import dev.abdus.apps.shimmer.p10.WallpaperTarget
 import dev.abdus.apps.shimmer.p3.ImageTransform
 import dev.abdus.apps.shimmer.p3.LiveEditBridge
 import dev.abdus.apps.shimmer.p3.P3Defaults
+import dev.abdus.apps.shimmer.p3.EditorSwitchSavePolicy
+import dev.abdus.apps.shimmer.p3.EditorPreferences
+import dev.abdus.apps.shimmer.p3.EditorDockPosition
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -229,7 +232,52 @@ class LockEditorActivityTest {
         assertEquals(1, preview.closes)
     }
 
+    @Test fun authenticatedLockEditorAlsoStartsWithOnlyRestoreButtonVisible() {
+        val session = open()
+        val all = descendants(controller!!.get().window.decorView)
+        assertEquals(View.GONE, all.first { it.tag == "p3-editor-dock" }.visibility)
+        assertTrue(all.first { it.tag == "p3-editor-restore-tools" }.isShown)
+        assertEquals(0, session.previews)
+        assertTrue(session.saves.isEmpty())
+    }
+
+    @Test fun savePolicyUsesLockStepAndKeepsPrivatePreviewSeparate() {
+        val session = open(); click("展开工具"); click("切换：询问")
+        val chooser = ShadowAlertDialog.getLatestAlertDialog()
+        chooser.listView.performItemClick(null, EditorSwitchSavePolicy.entries.indexOf(EditorSwitchSavePolicy.SAVE), 0L)
+        idle()
+        assertEquals(EditorSwitchSavePolicy.SAVE, EditorPreferences(context).switchSavePolicy())
+        click("左右镜像")
+        val surface = descendants(controller!!.get().window.decorView).first { it.contentDescription?.startsWith("壁纸编辑区") == true }
+        val info = androidx.core.view.accessibility.AccessibilityNodeInfoCompat.wrap(surface.createAccessibilityNodeInfo())
+        val action = info.actionList.first { it.label?.toString() == "下一张图片" }
+        assertTrue(surface.performAccessibilityAction(action.id, null))
+        idle()
+        assertEquals(listOf(true to true), session.steps)
+        assertFalse(chooser.isShowing)
+        assertEquals(0, session.previews)
+        assertTrue(controller!!.get().privatePreview.transforms.last().mirrorHorizontal)
+    }
+
+    @Test fun lockEditorRestoresSharedPanelStateWithoutTouchingCapturedImage() {
+        val store = EditorPreferences(context)
+        store.setDockVisible(true)
+        store.setToolsExpanded(true)
+        store.setDockPosition(EditorDockPosition.TOP)
+        val session = open()
+        val all = descendants(controller!!.get().window.decorView)
+        assertTrue(all.first { it.tag == "p3-editor-dock" }.isShown)
+        assertTrue(all.first { it.tag == "p3-editor-options" }.isShown)
+        assertEquals(listOf(session.previewUri), controller!!.get().privatePreview.uris)
+        assertTrue(session.saves.isEmpty()); assertEquals(0, session.previews)
+    }
+
     private fun click(label: String) {
+        val all = descendants(controller!!.get().window.decorView)
+        if (label != "工具" && all.first { it.tag == "p3-editor-dock" }.visibility != View.VISIBLE) {
+            all.filterIsInstance<Button>().first { it.tag == "p3-editor-restore-tools" }.performClick()
+            idle()
+        }
         descendants(controller!!.get().window.decorView).filterIsInstance<Button>().first { it.text == label }.performClick()
         idle()
     }

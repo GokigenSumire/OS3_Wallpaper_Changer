@@ -226,6 +226,7 @@ class P3EditorFollowUpActivityTest {
         LiveEditBridge.markVisible(targetId)
         controller = Robolectric.buildActivity(P3EditActivity::class.java).setup()
         shadowOf(Looper.getMainLooper()).idle()
+        click("工具")
         return s
     }
     private fun showStats() { click("展开工具"); click("调试"); click("显示统计") }
