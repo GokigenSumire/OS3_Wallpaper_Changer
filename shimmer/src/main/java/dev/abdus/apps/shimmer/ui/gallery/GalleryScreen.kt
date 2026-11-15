@@ -318,12 +318,12 @@ private fun EmptySourcesState(
             verticalArrangement = Arrangement.spacedBy(Spacing.m)
         ) {
             Text(
-                text = "暂无图片来源",
+                text = "还没有内容",
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "点击右上角 + 按钮添加媒体来源",
+                text = "点右上角 + 添加",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

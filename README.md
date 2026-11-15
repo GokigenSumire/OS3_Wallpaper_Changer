@@ -4,11 +4,21 @@
 
 ## 当前版本与下载
 
-主应用 **117／1.4.10-p11-source-media**，正式包名personal.wallpaper.os3，原签名覆盖升级；配套兼容模块 **99／1.1.24-updates**，独立安装、按需开启。minSdk31／targetSdk37，Room数据库9→10为保留数据的升级。
+主应用 **118／1.4.11-p11-fresh-gallery**，正式包名personal.wallpaper.os3，原签名覆盖升级；配套兼容模块 **100／1.1.25-independent-controls**，独立安装、按需开启。minSdk31／targetSdk37，Room数据库9→10为保留数据的升级。
 
-- [主117 APK、对应源码与说明](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases/tag/117-1.4.10-p11-source-media)
-- [模块99独立发布](https://github.com/GokigenSumire/OS4_E1_Observer/releases/tag/99-1.1.24-updates)
-- [主117发布说明与验证边界](docs/releases/主117-模块99.md)
+- [主118 APK、对应源码与说明](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases/tag/118-1.4.11-p11-fresh-gallery)
+- [模块100独立发布](https://github.com/GokigenSumire/OS4_E1_Observer/releases/tag/100-1.1.25-independent-controls)
+- [主118发布说明与验证边界](docs/releases/主118-模块100.md)
+
+## 主118与模块100界面优化
+
+主图标改为浅色柔光、天蓝与薄荷绿的壁纸窗口；[117深蓝图标已备案](docs/design/图标备选/117-深蓝层叠画框/说明.md)。图库总开关、类别和内容分层，图片／视频采用可见选中状态的紧凑选项；扫描、预览与移除收进菜单，重复文字减量，位置与必要说明按需打开。
+
+模块桌面与锁屏分别显示自己的开关和状态。桌面选择先保存，系统未就绪以提示说明，开启中仍可改为关闭；旧回执不能覆盖新选择，实际开启仍受原恢复、版本与安全准入控制。主页面保留必要操作，说明与诊断按需打开。
+
+![主118图标资源示意](docs/design/主118图标预览.png)
+
+图标预览为资源示意，实际蒙版、主题配色及本轮功能待目标机验收。本轮不增加数据库迁移，Room10保持；自动检查结果以本轮Release附件为准，旧版本成绩不迁移。
 
 ## 本轮与近期改进
 
@@ -21,13 +31,13 @@
 
 同正式包名与签名覆盖旧主应用，保留来源、历史、单项启停及数据，不卸载或清数据。Room10新增来源分类及类型元数据；不支持直接降级至旧数据库版本，异常采用后续修复版本。
 
-主应用可独立使用；有需要时安装Root／LSPosed可选模块99，保留系统框架和SystemUI作用域并按提示正常重载。进入锁屏编辑仍需要正常系统认证。模块99关于更新为独立发布，当前LSPosed收录例外申请待审核，不表示已获收录。
+主应用可独立使用；有需要时安装Root／LSPosed可选模块100，保留系统框架和SystemUI作用域并按提示正常重载。进入锁屏编辑仍需要正常系统认证。模块100关于更新为独立发布，当前LSPosed收录例外申请待审核，不表示已获收录。
 
-自动检查、测试卡、APK身份、签名与哈希见Release附件。新候选目标机体验均未验证，旧版本用户结果不迁移；主117Release完整检查未运行，完整Debug结果在发布说明中记录，P10历史未决项保留。保留历史[主105发布](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases/tag/v1.3.7-p11-r105-m97)。
+自动检查、测试卡、APK身份、签名与哈希见Release附件。新候选目标机体验均未验证，旧版本用户结果不迁移；主118Release完整检查未运行，完整Debug结果在发布说明中记录，P10历史未决项保留。保留历史[主105发布](https://github.com/GokigenSumire/OS3_Wallpaper_Changer/releases/tag/v1.3.7-p11-r105-m97)。
 
 ## 历史说明与构建资料
 
-以下保留旧版记录，当前入口和验证边界以上方主117说明为准。
+以下保留旧版记录，当前入口和验证边界以上方主118说明为准。
 
 ## 主要功能
 

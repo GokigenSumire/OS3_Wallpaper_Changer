@@ -3,8 +3,9 @@ package dev.abdus.apps.shimmer.ui.gallery.components
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.*
@@ -19,7 +20,6 @@ import androidx.compose.ui.unit.dp
 import dev.abdus.apps.shimmer.ui.components.BlurredCard
 import dev.abdus.apps.shimmer.ui.gallery.DirectoryControl
 import dev.abdus.apps.shimmer.ui.gallery.DirectoryRow
-import dev.abdus.apps.shimmer.ui.gallery.GalleryDirectoryRows
 import dev.abdus.apps.shimmer.ui.gallery.GalleryBatchImageRow
 import dev.abdus.apps.shimmer.ui.gallery.GalleryBatchPage
 import dev.abdus.apps.shimmer.ui.gallery.SourceItem
@@ -32,22 +32,15 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import dev.abdus.apps.shimmer.ui.theme.Spacing
 
-/**
- * P8.3 来源卡片组件
- * 卡片化设计；删除由调用方先弹出确认对话框。
- * 文件夹来源的子目录在卡片内逐级展开（整行点一次即展开/折叠），每层可单独启用或停用。
- */
+/** 来源总开关、媒体类别与内容分层；次要操作收纳到菜单。 */
 @Composable
 fun SourceCard(
     source: SourceItem,
     modifier: Modifier = Modifier,
     onToggleEnabled: () -> Unit = {},
     onSetMediaEnabled: (video: Boolean, enabled: Boolean) -> Unit = { _, _ -> },
-    /** P9-GALLERY-04：重新扫描该来源，取代原先跳转旧 P1 页的"编辑"。 */
     onRescan: () -> Unit = {},
-    /** P9-PREVIEW-EDIT-01：点预览图更换预览图；只改预览存储，不改来源与图片。 */
     onChangePreview: () -> Unit = {},
-    /** 导入或扫描进行中时禁用操作，避免并发改同一来源。 */
     busy: Boolean = false,
     onDelete: () -> Unit = {},
     onToggleDirectory: (path: String) -> Unit = {},
@@ -56,192 +49,75 @@ fun SourceCard(
     onMoveBatchPage: (delta: Int) -> Unit = {},
     onSetBatchImageEnabled: (uri: String, enabled: Boolean) -> Unit = { _, _ -> },
 ) {
-    BlurredCard(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(Spacing.m)
-        ) {
-            // 主信息行
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // 图标 + 名称
-                Row(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(Spacing.m),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // P9-GALLERY-01：有图片时显示预览缩略图，没有时回落到类型图标。
-                    // 用 Coil 而非 P1 页的 PreviewThumbnailLoader——后者是为 View 体系的 ImageView
-                    // 写的；Coil 在新 UI 已用于壁纸背景与当前图片卡，缓存与采样一并复用。
-                    // P9-PREVIEW-EDIT-01：预览图本身就是"更换预览图"按钮，不画可见按钮；
-                    // 触控区按 48dp 下限外扩，图片仍是 40dp，卡片高度不变。
-                    val preview = source.previewUri
-                    Box(
-                        modifier = Modifier
-                            .size(PreviewTouchSize)
-                            .clip(MaterialTheme.shapes.small)
-                            .clickable(
-                                role = Role.Button,
-                                onClickLabel = "更换预览图",
-                                onClick = onChangePreview,
-                            )
-                            .semantics { contentDescription = "更换预览图" },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (preview != null) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalContext.current)
-                                    .data(preview)
-                                    .crossfade(true)
-                                    .build(),
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(PreviewSize)
-                                    .clip(MaterialTheme.shapes.small),
-                            )
-                        } else {
-                            Icon(
-                                imageVector = when (source.type) {
-                                    SourceType.FOLDER -> Icons.Default.Folder
-                                    else -> Icons.Default.Image
-                                },
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = source.name,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = "${source.kindLabel}    ${source.imageCount} 项内容",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = source.location,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+    var menu by remember { mutableStateOf(false) }
+    var showDetails by remember { mutableStateOf(false) }
+    BlurredCard(modifier = modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+        Column(Modifier.fillMaxWidth().padding(Spacing.m), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.size(PreviewTouchSize).clip(MaterialTheme.shapes.small)
+                    .clickable(enabled = !busy, role = Role.Button, onClickLabel = "更换预览图", onClick = onChangePreview)
+                    .semantics { contentDescription = "更换预览图" }, contentAlignment = Alignment.Center) {
+                    if (source.previewUri != null) AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current).data(source.previewUri).crossfade(true).build(),
+                        contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(PreviewSize).clip(MaterialTheme.shapes.small))
+                    else Icon(if (source.type == SourceType.FOLDER) Icons.Default.Folder else Icons.Default.Image,
+                        null, tint = MaterialTheme.colorScheme.primary)
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(source.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("${source.kindLabel}  ${source.imageCount} 项" + if (source.isEnabled) "" else "  已停用",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = source.isEnabled, enabled = !busy, onCheckedChange = { onToggleEnabled() },
+                    modifier = Modifier.semantics { contentDescription = "${source.name}来源开关" })
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, contentDescription = "来源操作") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("重新扫描") }, enabled = !busy,
+                            onClick = { menu = false; onRescan() })
+                        DropdownMenuItem(text = { Text("更换预览图") }, enabled = !busy,
+                            onClick = { menu = false; onChangePreview() })
+                        DropdownMenuItem(text = { Text("位置与说明") }, onClick = { menu = false; showDetails = true })
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("移除来源", color = MaterialTheme.colorScheme.error) }, enabled = !busy,
+                            onClick = { menu = false; onDelete() })
                     }
                 }
-
-                // 启用开关
-                Switch(
-                    checked = source.isEnabled,
-                    onCheckedChange = { onToggleEnabled() }
-                )
             }
-
             if (source.type == SourceType.FOLDER || source.type == SourceType.MULTI_IMAGES) {
-                Spacer(Modifier.height(Spacing.s))
-                HorizontalDivider()
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SourceMediaSwitch("图片", source.imageMediaCount, source.imagesEnabled, !busy,
                         Modifier.weight(1f)) { onSetMediaEnabled(false, it) }
                     SourceMediaSwitch("视频", source.videoMediaCount, source.videosEnabled, !busy,
                         Modifier.weight(1f)) { onSetMediaEnabled(true, it) }
                 }
-                Text(when {
-                    !source.isEnabled -> "来源已停用；类型选择会保留"
-                    !source.imagesEnabled && !source.videosEnabled -> "两类均已停用，当前画面与内容保留"
-                    else -> "动态照片归图片；分类调整从下次换图生效"
-                }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (source.unknownMediaCount > 0) Text("${source.unknownMediaCount} 项类型待确认，可重新扫描",
+                if (source.unknownMediaCount > 0) Text("${source.unknownMediaCount} 项类型待确认，请重新扫描",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-
-            // 子目录：来源文件夹本身是最外层，默认折叠；规则与 P1 来源页相同
             if (source.type == SourceType.FOLDER && source.directoryRows.rows.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(Spacing.s))
-                Text(
-                    text = "${source.subdirectoryCount} 个子目录（随上级启停）",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                HorizontalDivider()
                 source.directoryRows.rows.forEach { row ->
-                    Spacer(Modifier.height(6.dp))
-                    DirectoryRowItem(
-                        row = row,
-                        onToggle = { onToggleDirectory(row.path) },
-                        onSetEnabled = { enabled -> onSetDirectoryEnabled(row.path, enabled) },
-                    )
+                    DirectoryRowItem(row, onToggle = { onToggleDirectory(row.path) },
+                        onSetEnabled = { onSetDirectoryEnabled(row.path, it) })
                 }
-                if (source.directoryRows.truncated) {
-                    Text(
-                        text = "只列出前 ${GalleryDirectoryRows.ROW_LIMIT} 行；请先折叠部分文件夹再展开要查看的层级。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                if (source.directoryRows.truncated) Text("请先折叠部分目录后继续",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-
             if (source.type == SourceType.MULTI_IMAGES) {
-                Spacer(modifier = Modifier.height(Spacing.s))
-                BatchImageSection(
-                    page = source.batchPage,
-                    sourceEnabled = source.isEnabled,
-                    busy = busy,
-                    onToggle = onToggleBatch,
-                    onMovePage = onMoveBatchPage,
-                    onSetEnabled = onSetBatchImageEnabled,
-                )
-            }
-
-            // 操作按钮
-            Spacer(modifier = Modifier.height(Spacing.m))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Spacing.s)
-            ) {
-                OutlinedButton(
-                    onClick = onRescan,
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(Spacing.xs))
-                    Text("重新扫描")
-                }
-
-                OutlinedButton(
-                    onClick = onDelete,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(Spacing.xs))
-                    Text("删除")
-                }
+                HorizontalDivider()
+                BatchImageSection(source.batchPage, source.isEnabled, busy, onToggleBatch, onMoveBatchPage, onSetBatchImageEnabled)
             }
         }
     }
+    if (showDetails) AlertDialog(onDismissRequest = { showDetails = false }, title = { Text("来源信息") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            androidx.compose.foundation.text.selection.SelectionContainer { Text(source.location) }
+            if (source.type != SourceType.SINGLE_IMAGE) Text("动态照片归图片。分类从下次换图生效；关闭分类保留原内容和单项设置。")
+        } }, confirmButton = { TextButton(onClick = { showDetails = false }) { Text("关闭") } })
 }
 
-/** 多选组固定分页，父来源停用时保留各图自身记录，但逐张开关不可操作。 */
 @Composable
 private fun BatchImageSection(
     page: GalleryBatchPage,
@@ -251,33 +127,13 @@ private fun BatchImageSection(
     onMovePage: (Int) -> Unit,
     onSetEnabled: (String, Boolean) -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .clickable(
-                role = Role.Button,
-                onClickLabel = if (page.expanded) "折叠图片组" else "展开图片组",
-                onClick = onToggle,
-            )
-            .semantics { stateDescription = if (page.expanded) "已展开" else "已折叠" },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = "${if (page.expanded) "▼" else "▶"} 图片组 · 共 ${page.totalCount} 张 · 本图停用 ${page.stoppedCount} 张",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-    }
-    if (!page.expanded) return
-    Text(
-        text = if (sourceEnabled) {
-            "每页最多 50 张；逐张启停同步影响所有共享来源，关联与手动位置保留。"
-        } else {
-            "来源已停用，逐张开关由来源控制；重新启用来源后各图自身状态恢复。"
-        },
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    dev.abdus.apps.shimmer.ui.components.FolderLevelHeader(
+        name = "内容列表", count = page.totalCount, depth = 0,
+        expanded = page.expanded, expandable = page.totalCount > 0,
+        state = if (page.stoppedCount > 0) "停用 ${page.stoppedCount} 项" else null,
+        onToggle = onToggle,
     )
+    if (!page.expanded) return
     page.rows.forEach { row ->
         BatchImageRowItem(row = row, busy = busy, onSetEnabled = { onSetEnabled(row.uri, it) })
     }
@@ -307,7 +163,7 @@ private fun BatchImageRowItem(row: GalleryBatchImageRow, busy: Boolean, onSetEna
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(row.stateLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!row.enabled || !row.canToggle) Text(row.stateLabel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(
             checked = row.enabled,
@@ -334,7 +190,7 @@ private fun DirectoryRowItem(
         state = row.stateLabel, onToggle = onToggle,
     ) {
         when (row.control) {
-            DirectoryControl.SOURCE_SWITCH -> DirectoryControlNote("来源控制")
+            DirectoryControl.SOURCE_SWITCH -> Unit
             DirectoryControl.PARENT -> DirectoryControlNote("上级控制")
             DirectoryControl.TOGGLE -> TextButton(onClick = { onSetEnabled(row.stopped) }) {
                 Text(if (row.stopped) "启用" else "停用")
@@ -346,11 +202,17 @@ private fun DirectoryRowItem(
 @Composable
 private fun SourceMediaSwitch(label: String, count: Int, checked: Boolean, enabled: Boolean,
                               modifier: Modifier, onChanged: (Boolean) -> Unit) {
-    Column(modifier.padding(vertical = 8.dp)) {
-        Text("$label $count", style = MaterialTheme.typography.labelLarge)
-        Switch(checked = checked, enabled = enabled, onCheckedChange = onChanged,
-            modifier = Modifier.semantics { contentDescription = "${label}类型启用开关" })
-    }
+    FilterChip(
+        selected = checked, enabled = enabled, onClick = { onChanged(!checked) },
+        modifier = modifier.heightIn(min = 48.dp).semantics {
+            contentDescription = "$label $count 项类型开关"
+            stateDescription = if (checked) "已开启" else "已关闭"
+        },
+        label = { Text("$label $count", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        leadingIcon = if (checked) { { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) } } else null,
+        colors = FilterChipDefaults.filterChipColors(containerColor = Color.Transparent,
+            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)),
+    )
 }
 
 @Composable

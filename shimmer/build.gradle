@@ -30,8 +30,8 @@ android {
         applicationId "personal.wallpaper.os3"
         minSdkVersion libs.versions.minSdk.get().toInteger()
         targetSdkVersion libs.versions.targetSdk.get().toInteger()
-        versionCode 117
-        versionName '1.4.10-p11-source-media'
+        versionCode 118
+        versionName '1.4.11-p11-fresh-gallery'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
 

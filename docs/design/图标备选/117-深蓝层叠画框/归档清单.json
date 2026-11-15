@@ -1,0 +1,46 @@
+{
+  "versionCode": 117,
+  "versionName": "1.4.10-p11-source-media",
+  "files": [
+    {
+      "path": "drawable/ic_launcher_background.xml",
+      "sha256": "6867AFE72C985198E07FF1A1C41B542CBC24469C6D13775791A92987D72BDCB9"
+    },
+    {
+      "path": "drawable/ic_launcher_foreground.xml",
+      "sha256": "ECF52CA6FF3224D4885105AB0921A2AB222ED49848E09108CAF8866758105631"
+    },
+    {
+      "path": "drawable/ic_launcher_monochrome.xml",
+      "sha256": "C68FF58A05C5232436BAFDDF39BE54F6F2125B942148BCB3680DD9112B2B13CF"
+    },
+    {
+      "path": "drawable/shimmer.xml",
+      "sha256": "A5E2760D743C5453D40265C10DC3CD857147C65D7B76E17B42B57EC64B5D0C83"
+    },
+    {
+      "path": "mipmap-anydpi/ic_launcher.xml",
+      "sha256": "12F2D6B6F20861113A6F3D9CB80C1D389722E57A85930DAC297ED0EC62B9074D"
+    },
+    {
+      "path": "mipmap-anydpi/ic_launcher_round.xml",
+      "sha256": "12F2D6B6F20861113A6F3D9CB80C1D389722E57A85930DAC297ED0EC62B9074D"
+    },
+    {
+      "path": "mipmap-anydpi-v26/ic_launcher.xml",
+      "sha256": "E05482B84135BE27EE4D278334B57F100BCCCFC818D87CE5F3BBCC1DA78FC50F"
+    },
+    {
+      "path": "mipmap-anydpi-v26/ic_launcher_round.xml",
+      "sha256": "E05482B84135BE27EE4D278334B57F100BCCCFC818D87CE5F3BBCC1DA78FC50F"
+    },
+    {
+      "path": "mipmap-anydpi-v33/ic_launcher.xml",
+      "sha256": "0C4F06BC9D418CCB0FFD9F9B893D5C3999FDEA5CF6AD30C230892118136D2A5B"
+    },
+    {
+      "path": "mipmap-anydpi-v33/ic_launcher_round.xml",
+      "sha256": "0C4F06BC9D418CCB0FFD9F9B893D5C3999FDEA5CF6AD30C230892118136D2A5B"
+    }
+  ]
+}
