@@ -26,6 +26,7 @@ data class P1PlaybackSourceLinks(
     val source: P1SourceEntity,
     /** SQLite has already ordered these rows by sortOrder then imageId using BINARY collation. */
     val links: List<P1PlaybackSourceLinkRow>,
+    val times: List<P1FileTimeEntity> = emptyList(),
 )
 
 object P1PlaybackProjection {
@@ -48,10 +49,13 @@ object P1PlaybackProjection {
         val expectedRows = projectionCapacity(batches.map { it.links.size })
         val images = ArrayList<P1PlaybackImage>(expectedRows)
         val seen = HashSet<String>(expectedRows + expectedRows / 3 + 1)
+        val timeIndices = batches.associate { it.source.id to P1FileTimeIndex(it.times) }
         fun append(source: P1SourceEntity, link: P1PlaybackSourceLinkRow) {
             if (!seen.add(link.id)) return
+            val times = timeIndices.getValue(source.id)
             images.add(P1PlaybackImage(link.id, link.uri, link.displayName, link.relativePath,
-                source.id, source.sourceOrder, link.sortOrder.toInt(), source.kind, source.rootUri))
+                source.id, source.sourceOrder, link.sortOrder.toInt(), source.kind, source.rootUri,
+                times.file(link.uri), times.ancestors(link.relativePath, source.kind == "DIRECTORY_TREE")))
         }
         var start = 0
         while (start < ordered.size) {

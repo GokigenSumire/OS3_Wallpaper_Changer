@@ -129,8 +129,25 @@ class P1AndroidSourceScanner(context: Context) {
             override val isDirectory = false
             override val mimeType = appContext.contentResolver.getType(accessUri)
             override val sizeBytes = size
+            override val fileTimes by lazy { selectedTimes(accessUri, cancellationSignal) }
             override fun children(): Iterable<P1TreeNode> = emptyList()
         }
+    }
+
+    /** A provider rejecting an optional time column must not reject a valid image. */
+    internal fun selectedTimes(uri: Uri, signal: CancellationSignal?): dev.abdus.apps.shimmer.p2.FileTimestamps {
+        signal?.throwIfCanceled()
+        val original = OriginalFileTimes.document(appContext, uri, signal)
+        val modified = try {
+            appContext.contentResolver.query(uri,
+                arrayOf(DocumentsContract.Document.COLUMN_LAST_MODIFIED), null, null, null, signal)?.use {
+                val index = it.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+                if (it.moveToFirst() && index >= 0 && !it.isNull(index)) it.getLong(index).takeIf { value -> value > 0 } else null
+            }
+        } catch (cancelled: OperationCanceledException) { throw cancelled
+        } catch (cancelled: CancellationException) { throw cancelled
+        } catch (_: Exception) { null }
+        return original.copy(modifiedMillis = modified ?: original.modifiedMillis)
     }
 
     private fun documentNode(
@@ -158,6 +175,7 @@ class P1AndroidSourceScanner(context: Context) {
         override val isDirectory: Boolean = canonicalFile.isDirectory
         override val mimeType: String? = null
         override val sizeBytes: Long? = canonicalFile.takeIf(File::isFile)?.length()
+        override val fileTimes by lazy { OriginalFileTimes.file(canonicalFile) }
 
         override fun children(): Iterable<P1TreeNode> = children {}
 
@@ -180,6 +198,7 @@ class P1AndroidSourceScanner(context: Context) {
         val mimeType: String,
         val displayName: String,
         val sizeBytes: Long?,
+        val modifiedMillis: Long? = null,
     )
 
     private inner class DocumentTreeNode(
@@ -195,6 +214,11 @@ class P1AndroidSourceScanner(context: Context) {
         override val isDirectory: Boolean = metadata.mimeType == DocumentsContract.Document.MIME_TYPE_DIR
         override val mimeType: String = metadata.mimeType
         override val sizeBytes: Long? = metadata.sizeBytes
+        override val fileTimes by lazy {
+            OriginalFileTimes.document(context, accessUri, cancellationSignal).let {
+                it.copy(modifiedMillis = metadata.modifiedMillis ?: it.modifiedMillis)
+            }
+        }
 
         override fun children(): Iterable<P1TreeNode> = children {}
 
@@ -214,14 +238,7 @@ class P1AndroidSourceScanner(context: Context) {
 
             val result = mutableListOf<P1TreeNode>()
             val cursor = try {
-                context.contentResolver.query(
-                    childrenUri,
-                    DOCUMENT_PROJECTION,
-                    null,
-                    null,
-                    null,
-                    cancellationSignal,
-                )
+                queryDocumentCursor(context, childrenUri, cancellationSignal)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (cancelled: OperationCanceledException) {
@@ -268,14 +285,7 @@ class P1AndroidSourceScanner(context: Context) {
     ): DocumentMetadata {
         checkActive()
         val cursor = try {
-            appContext.contentResolver.query(
-                accessUri,
-                DOCUMENT_PROJECTION,
-                null,
-                null,
-                null,
-                cancellationSignal,
-            )
+            queryDocumentCursor(appContext, accessUri, cancellationSignal)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (cancelled: OperationCanceledException) {
@@ -310,6 +320,15 @@ class P1AndroidSourceScanner(context: Context) {
         val size: Int,
     )
 
+    private fun queryDocumentCursor(context: Context, uri: Uri, signal: CancellationSignal?): Cursor? = try {
+        context.contentResolver.query(uri, DOCUMENT_PROJECTION, null, null, null, signal)
+    } catch (_: IllegalArgumentException) {
+        signal?.throwIfCanceled()
+        context.contentResolver.query(uri, DOCUMENT_PROJECTION.filterNot {
+            it == DocumentsContract.Document.COLUMN_LAST_MODIFIED
+        }.toTypedArray(), null, null, null, signal)
+    }
+
     private fun requiredIndices(cursor: Cursor): ColumnIndices {
         val indices = ColumnIndices(
             documentId = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DOCUMENT_ID),
@@ -332,7 +351,10 @@ class P1AndroidSourceScanner(context: Context) {
         } else {
             cursor.getLong(indices.size).takeIf { it >= 0L }
         }
-        return DocumentMetadata(documentId, mimeType, displayName, sizeBytes)
+        val modifiedIndex = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+        val modified = if (modifiedIndex >= 0 && !cursor.isNull(modifiedIndex))
+            cursor.getLong(modifiedIndex).takeIf { it > 0 } else null
+        return DocumentMetadata(documentId, mimeType, displayName, sizeBytes, modified)
     }
 
     private fun requiredString(cursor: Cursor, index: Int): String {
@@ -356,6 +378,7 @@ class P1AndroidSourceScanner(context: Context) {
             DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_SIZE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED,
         )
     }
 }

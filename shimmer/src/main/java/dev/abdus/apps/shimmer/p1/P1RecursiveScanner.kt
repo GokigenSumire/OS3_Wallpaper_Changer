@@ -24,7 +24,8 @@ class P1RecursiveScanner(
         fun failure(reason: P1ScanFailure): P1ScanOutcome.Failed =
             P1ScanOutcome.Failed(reason, visited.size, images.size)
 
-        fun walk(node: P1TreeNode, path: String, isRoot: Boolean) {
+        fun walk(node: P1TreeNode, path: String, isRoot: Boolean,
+                 parents: List<dev.abdus.apps.shimmer.p2.PlaybackDirectoryTime> = emptyList()) {
             checkActive()
             if (!visited.add(node.id)) return
             val currentPath = if (path.isEmpty()) node.name else "$path/${node.name}"
@@ -47,7 +48,10 @@ class P1RecursiveScanner(
 
                 // Provider order is not a stable ordering contract. Sort before walking so
                 // rescans produce the same order for the same tree and names.
-                children.forEach { child -> walk(child, currentPath.takeUnless { isRoot } ?: "", false) }
+                val directory = dev.abdus.apps.shimmer.p2.PlaybackDirectoryTime(
+                    if (isRoot) "" else currentPath, node.fileTimes)
+                val ancestors = parents + directory
+                children.forEach { child -> walk(child, currentPath.takeUnless { isRoot } ?: "", false, ancestors) }
                 return
             }
 
@@ -62,6 +66,9 @@ class P1RecursiveScanner(
                 displayName = node.name,
                 relativePath = relativePath,
                 sizeBytes = node.sizeBytes,
+                fileTimes = node.fileTimes,
+                directoryTimes = parents,
+                mediaType = P1MediaTypes.classify(node.name, node.uri, node.mimeType),
             )
             onProgress(P1ScanProgress(visited.size, images.size, currentPath))
         }

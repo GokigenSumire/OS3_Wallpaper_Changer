@@ -22,7 +22,7 @@ data class P1CatalogStamp(val epoch: String, val revision: Long, val schemaVersi
 /** Persistent transaction identity, not a listener, content hash or time-to-live. */
 object P1CatalogRevision {
     internal const val TABLE = "playback_catalog_revision"
-    internal val tables = listOf("sources", "image_records", "source_image_links", "source_directory_exclusions")
+    internal val tables = listOf("sources", "image_records", "source_image_links", "source_directory_exclusions", "source_file_times")
     internal val triggerDefinitions: Map<String, String> = buildMap {
         for (table in tables) for (action in listOf("INSERT", "UPDATE", "DELETE")) {
             val name = "p9_catalog_${table}_${action.lowercase()}"
@@ -56,6 +56,10 @@ object P1CatalogRevision {
             arrayOf(UUID.randomUUID().toString()))
         var repaired = false
         for ((name, definition) in triggerDefinitions) {
+            // Historical 7→8 fixtures have no time table until the additive 8→9 migration.
+            if (name.startsWith("p9_catalog_source_file_times_") && !database.query(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'source_file_times'"
+                ).use { it.moveToFirst() }) continue
             val exists = database.query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = ?",
                 arrayOf(name)).use { it.moveToFirst() }
             if (!exists) {

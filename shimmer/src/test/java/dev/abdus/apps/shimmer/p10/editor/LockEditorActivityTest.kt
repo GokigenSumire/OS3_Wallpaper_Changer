@@ -242,7 +242,7 @@ class LockEditorActivityTest {
     }
 
     @Test fun savePolicyUsesLockStepAndKeepsPrivatePreviewSeparate() {
-        val session = open(); click("展开工具"); click("切换：询问")
+        val session = open(); click("展开工具"); click("离开：询问")
         val chooser = ShadowAlertDialog.getLatestAlertDialog()
         chooser.listView.performItemClick(null, EditorSwitchSavePolicy.entries.indexOf(EditorSwitchSavePolicy.SAVE), 0L)
         idle()
@@ -257,6 +257,14 @@ class LockEditorActivityTest {
         assertFalse(chooser.isShowing)
         assertEquals(0, session.previews)
         assertTrue(controller!!.get().privatePreview.transforms.last().mirrorHorizontal)
+    }
+
+    @Test fun savePolicyBackCommitsAuthenticatedLockDraft() {
+        EditorPreferences(context).setSwitchSavePolicy(EditorSwitchSavePolicy.SAVE)
+        val session = open(); click("展开工具"); click("左右镜像")
+        controller!!.get().onBackPressedDispatcher.onBackPressed()
+        assertTrue(session.saves.single()!!.mirrorHorizontal)
+        assertEquals(0, session.cancels); assertEquals(0, session.previews)
     }
 
     @Test fun lockEditorRestoresSharedPanelStateWithoutTouchingCapturedImage() {

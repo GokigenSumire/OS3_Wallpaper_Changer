@@ -61,15 +61,21 @@ class MainActivity : ComponentActivity() {
             }
             ShimmerTheme(darkTheme = darkTheme) {
                 // 外观设置一次性下发给所有组件，参考 KernelSU 的 CompositionLocal 开关做法
-                CompositionLocalProvider(LocalAppearanceSettings provides appearance) {
+                CompositionLocalProvider(LocalAppearanceSettings provides appearance,
+                    dev.abdus.apps.shimmer.p0.LocalMainEntry provides dev.abdus.apps.shimmer.p0.DiagnosticStageEntries.readMainEntry(intent)) {
                     // Surface 保持默认底色：MainNavigation 自己铺 WallpaperBackdrop 并用透明
                     // Scaffold，这层底色被完全覆盖；改动它会引入未验证的视觉变化。
                     Surface(modifier = Modifier.fillMaxSize()) {
-                        MainNavigation()
+                        dev.abdus.apps.shimmer.ui.onboarding.FirstUseGuideHost { MainNavigation() }
                     }
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        dev.abdus.apps.shimmer.media.MediaSoundService.sync(this)
     }
 
     override fun onDestroy() {

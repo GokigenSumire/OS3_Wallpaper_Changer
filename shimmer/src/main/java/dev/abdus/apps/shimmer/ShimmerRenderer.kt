@@ -19,8 +19,9 @@ import dev.abdus.apps.shimmer.p5.TransitionStats
 import dev.abdus.apps.shimmer.p5.TransitionTimeline
 import java.util.concurrent.atomic.AtomicReference
 
-class ShimmerRenderer(private val callbacks: Callbacks, mediaContext: android.content.Context? = null) : GLWallpaperService.Renderer {
-    private val mediaOwner = mediaContext?.let { dev.abdus.apps.shimmer.media.MediaPlaybackOwner(it, callbacks::requestRender) }
+class ShimmerRenderer(private val callbacks: Callbacks, mediaContext: android.content.Context? = null, audioEligible: Boolean = false,
+    wallpaperTarget: dev.abdus.apps.shimmer.p10.WallpaperTarget = dev.abdus.apps.shimmer.p10.WallpaperTarget.HOME) : GLWallpaperService.Renderer {
+    private val mediaOwner = mediaContext?.let { dev.abdus.apps.shimmer.media.MediaPlaybackOwner(it, callbacks::requestRender, audioEligible, wallpaperTarget) }
     private fun newImageRenderer() = ImageRenderer(mediaOwner, callbacks::requestRender)
     fun setMediaPlaybackAllowed(allowed: Boolean) { mediaOwner?.setAllowed(allowed) }
     fun observeMediaKeyguard(locked: Boolean) { mediaOwner?.observeKeyguard(locked) }

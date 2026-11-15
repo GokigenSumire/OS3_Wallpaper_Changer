@@ -16,6 +16,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -42,6 +44,7 @@ class P1SourceRepository internal constructor(
     private val appContext = context.applicationContext
     private val database = databaseOverride ?: ShimmerDatabase.getInstance(appContext, target)
     private val dao = database.p1SourceDao()
+    private val mediaWriteMutex = Mutex()
     private val scanner = P1AndroidSourceScanner(appContext)
     private val boundsReader = P1ImageBoundsReader(appContext.contentResolver)
     val sources: Flow<List<P1SourceEntity>> = dao.sourcesFlow()
@@ -269,9 +272,14 @@ class P1SourceRepository internal constructor(
             val requestedUri = scanUriOverride ?: originalUri
             var scanUri = requestedUri
             var copiedDisplayName: String? = null
+            // The stored copy's own birth/mtime are not the selected original's dates.
+            var copiedTimes: dev.abdus.apps.shimmer.p2.FileTimestamps? = if (keepNamesOf != null)
+                database.p1FileTimeDao().getFile(registered.id, keepNamesOf.uri)?.times()
+                    ?: dev.abdus.apps.shimmer.p2.FileTimestamps() else null
             var permissionState = permissionStateFor(requestedUri)
             if (requestedUri.scheme == "content" && !P1SourceIntents.hasPersistedReadPermission(appContext, requestedUri)) {
                 if (allowAppCopy) {
+                    copiedTimes = scanner.selectedTimes(requestedUri, null)
                     scanUri = try {
                         copyIntoAppStorage(requestedUri)
                     } catch (cancelled: CancellationException) {
@@ -322,6 +330,7 @@ class P1SourceRepository internal constructor(
                                         stableKey = identity ?: it.stableKey,
                                         displayName = copiedDisplayName ?: keepNamesOf?.displayName ?: it.displayName,
                                         relativePath = copiedDisplayName ?: keepNamesOf?.relativePath ?: it.relativePath,
+                                        fileTimes = copiedTimes ?: it.fileTimes,
                                     )
                                 },
                             ),
@@ -450,6 +459,26 @@ class P1SourceRepository internal constructor(
         dao.setSourceEnabled(sourceId, enabled, isoNow())
     }
 
+    /** 先按请求顺序取得锁，再进入IO补全类型；只写当前类别，不覆盖另一类别或总开关。 */
+    suspend fun setMediaEnabled(sourceId: String, video: Boolean, enabled: Boolean): Int = mediaWriteMutex.withLock {
+        withContext(Dispatchers.IO) {
+            val source = requireNotNull(dao.getSource(sourceId)) { "来源已删除" }
+            require(source.kind in setOf(P1SourceKind.MULTIPLE_DOCUMENTS.name, P1SourceKind.DIRECTORY_TREE.name))
+            val unknown = dao.getSourceImages(sourceId).filter { it.mediaType == P1MediaTypes.UNKNOWN }
+            val classifications = unknown.mapNotNull { image ->
+                currentCoroutineContext().ensureActive()
+                val mime = runCatching { appContext.contentResolver.getType(Uri.parse(image.uri)) }.getOrNull()
+                P1MediaTypes.classify(image.displayName, image.uri, mime)?.let { image to it }
+            }
+            database.withTransaction {
+                requireNotNull(dao.getSource(sourceId)) { "来源已删除" }
+                for ((image, type) in classifications) dao.classifyUnknownMedia(image.id, image.uri, type)
+                check(dao.setSourceMediaEnabled(sourceId, video, enabled, isoNow()) == 1)
+            }
+            dao.getSourceImages(sourceId).count { it.mediaType == P1MediaTypes.UNKNOWN }
+        }
+    }
+
     /**
      * Directory paths of [sourceId] the user stopped. Each path also covers its own subtree, so a
      * descendant is stopped when any of its ancestors is listed.
@@ -555,11 +584,26 @@ class P1SourceRepository internal constructor(
                 width = image.width,
                 height = image.height,
                 metadataState = "COMMITTED",
+                mediaType = image.mediaType ?: P1MediaTypes.classify(image.displayName, image.uri,
+                    runCatching { appContext.contentResolver.getType(Uri.parse(image.uri)) }.getOrNull()) ?: P1MediaTypes.IMAGE,
                 createdAt = now,
                 updatedAt = now,
             )
         }
-        dao.commitScan(spec.sourceId, entities, permissionState, now)
+        val times = linkedMapOf<String, dev.abdus.apps.shimmer.database.P1FileTimeEntity>()
+        for (image in images) {
+            times[image.uri] = dev.abdus.apps.shimmer.database.P1FileTimeEntity(spec.sourceId, image.uri,
+                image.fileTimes.createdMillis, image.fileTimes.modifiedMillis)
+            for (directory in image.directoryTimes) {
+                val key = "dir:${directory.path}"
+                times[key] = dev.abdus.apps.shimmer.database.P1FileTimeEntity(spec.sourceId, key,
+                    directory.times.createdMillis, directory.times.modifiedMillis)
+            }
+        }
+        database.withTransaction {
+            dao.commitScan(spec.sourceId, entities, permissionState, now)
+            database.p1FileTimeDao().put(times.values.toList())
+        }
     }
 
     private suspend fun markState(

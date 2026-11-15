@@ -96,6 +96,37 @@ class DisabledPlaybackViewModelTest {
         assertEquals("子目录/002.jpg", state.disabledPage.entries.single().detail)
     }
 
+    @Test fun disableActionPersistsWithoutPlayingOrRewritingHistoryAndCanRestore() {
+        val vm = loaded(stopped = emptySet())
+        val before = snapshots.load()
+        vm.disableImage(ids[2])
+        await { vm.uiState.value.disabledPage.disabledIds == setOf(ids[2]) && !vm.uiState.value.isReloading }
+        assertEquals(setOf(ids[2]), preferences.getDisabledImages())
+        assertFalse(ids[2] in vm.uiState.value.queue.positions)
+        assertEquals(before, snapshots.load())
+        assertTrue(played.isEmpty())
+        assertEquals("album",vm.uiState.value.disabledPage.model.ordered.single().sourceId)
+        assertTrue(vm.uiState.value.disabledRows.any { it is QueueRow.GroupHeader })
+        vm.restoreDisabledImage(ids[2])
+        await { vm.uiState.value.disabledPage.totalCount == 0 && ids[2] in vm.uiState.value.queue.positions && !vm.uiState.value.isReloading }
+        assertEquals(before, snapshots.load())
+    }
+    @Test fun foreignDisableActionDoesNotChangePreferences() {
+        val vm=loaded(stopped=emptySet())
+        vm.disableImage("file:///foreign.jpg")
+        assertTrue(preferences.getDisabledImages().isEmpty())
+        assertTrue(played.isEmpty())
+    }
+    @Test fun stoppedSourceKeepsDisabledHierarchyButRestoreDoesNotEnableSource() {
+        val vm=loaded()
+        runBlocking { database.p1SourceDao().setSourceEnabled("album",false,null) }
+        await { vm.uiState.value.queue.size==0 && !vm.uiState.value.isReloading }
+        assertEquals("album",vm.uiState.value.disabledPage.model.ordered.single().sourceId)
+        vm.restoreDisabledImage(ids[1])
+        await { vm.uiState.value.disabledPage.totalCount==0 && !vm.uiState.value.isReloading }
+        assertEquals(0,vm.uiState.value.queue.size)
+        assertTrue(played.isEmpty())
+    }
     @Test fun sourceDisableDoesNotMisclassifyAllItsImagesAsPerImageStops() {
         val vm = loaded(stopped = emptySet())
         runBlocking { database.p1SourceDao().setSourceEnabled("album", false, null) }

@@ -107,4 +107,11 @@ class GalleryDirectoryRowsTest {
         assertEquals(4, result.rows.size)
         assertFalse(result.truncated)
     }
+    @Test fun leafWithFilesDoesNotOfferExpansionEvenIfRememberedExpanded() {
+        val result = rows(expanded = setOf("", "1", "1/1-1", "1/1-2"))
+        val leaf = result.rows.first { it.path == "1/1-1" }
+        assertEquals(2, leaf.totalCount)
+        assertFalse(leaf.hasChildren)
+        assertFalse(leaf.expanded)
+    }
 }

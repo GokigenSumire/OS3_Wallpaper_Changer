@@ -306,17 +306,44 @@ class P3EditorRevisionActivityTest {
         val s = open(); choosePolicy(EditorSwitchSavePolicy.SAVE); taps(2); idle(timeout)
         assertEquals(listOf(Triple(true, false, null)), s.steps)
     }
-    @Test fun switchingPolicyDoesNotChangeBackConfirmationOrLifecycleCancel() {
+    @Test fun savePolicySavesOnBackWithoutConfirmation() {
         val s = open(); choosePolicy(EditorSwitchSavePolicy.SAVE); click("左右镜像")
+        activity().onBackPressedDispatcher.onBackPressed()
+        assertTrue(s.saves.single()!!.mirrorHorizontal)
+        assertEquals(0, s.cancels); assertFalse(dialog().isShowing)
+    }
+    @Test fun discardPolicyCancelsOnBackWithoutConfirmation() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.DISCARD); click("左右镜像")
+        activity().onBackPressedDispatcher.onBackPressed()
+        assertTrue(s.saves.isEmpty()); assertEquals(1, s.cancels)
+        assertFalse(dialog().isShowing)
+    }
+    @Test fun resetOnBackWithSavePolicyRemovesStoredConfig() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.SAVE); click("重置")
+        activity().onBackPressedDispatcher.onBackPressed()
+        assertEquals(listOf<ImageTransform?>(null), s.saves); assertEquals(0, s.cancels)
+    }
+    @Test fun unchangedBackWithSavePolicyDoesNotWrite() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.SAVE)
+        activity().onBackPressedDispatcher.onBackPressed()
+        assertTrue(s.saves.isEmpty()); assertEquals(1, s.cancels)
+    }
+    @Test fun askPolicyKeepsBackConfirmationAndContinueEditing() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.ASK); click("左右镜像")
         activity().onBackPressedDispatcher.onBackPressed()
         assertEquals("保存修改？", shadowOf(dialog()).title.toString())
         clickDialog(dialog(), DialogInterface.BUTTON_NEUTRAL)
+        assertFalse(activity().isFinishing)
+        assertTrue(s.saves.isEmpty()); assertEquals(0, s.cancels)
+    }
+    @Test fun savePolicyStillCancelsOnLifecycleInterruption() {
+        val s = open(); choosePolicy(EditorSwitchSavePolicy.SAVE); click("左右镜像")
         controller!!.pause().stop()
         assertTrue(s.saves.isEmpty()); assertEquals(1, s.cancels)
     }
     @Test fun choosingPolicyNeitherEditsNorNavigatesAndCancelledChoiceKeepsValue() {
         val s = open(); choosePolicy(EditorSwitchSavePolicy.DISCARD)
-        click("切换：不存"); clickDialog(dialog(), DialogInterface.BUTTON_NEGATIVE)
+        click("离开：不存"); clickDialog(dialog(), DialogInterface.BUTTON_NEGATIVE)
         assertEquals(EditorSwitchSavePolicy.DISCARD, EditorPreferences(activity()).switchSavePolicy())
         assertTrue(s.previews.isEmpty()); assertTrue(s.steps.isEmpty()); assertTrue(s.saves.isEmpty())
     }
@@ -337,9 +364,9 @@ class P3EditorRevisionActivityTest {
         click("展开工具")
         val options = tagged("p3-editor-options") as ViewGroup
         assertEquals(3, options.childCount)
-        assertEquals(listOf("移至顶部", "适配：铺满", "切换：询问"),
+        assertEquals(listOf("移至顶部", "适配：铺满", "离开：询问"),
             (0 until options.childCount).map { (options.getChildAt(it) as Button).text.toString() })
-        assertEquals("切换图片时：每次询问", tagged("p3-editor-switch-save-policy").contentDescription)
+        assertEquals("切换图片或返回退出时：每次询问", tagged("p3-editor-switch-save-policy").contentDescription)
     }
 
     @Test fun reopeningRestoresCompactExpandedAndPurePreviewWithoutSavingAnImage() {

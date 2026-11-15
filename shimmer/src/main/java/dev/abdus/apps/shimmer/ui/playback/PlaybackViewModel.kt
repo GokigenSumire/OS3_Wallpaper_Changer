@@ -64,6 +64,19 @@ class PlaybackViewModel @JvmOverloads constructor(
 
     /** 展开、分页、刚移动、选定：只属于界面，只在主线程读写。 */
     private var queueView = QueueViewState()
+    private var disabledView = QueueViewState()
+
+    fun toggleDisabledLevel(key: String) {
+        disabledView = disabledView.toggle(key)
+        publishDisabledRows()
+    }
+    fun showMoreDisabledRows(key: String) {
+        disabledView = disabledView.showMore(key)
+        publishDisabledRows()
+    }
+    private fun publishDisabledRows() {
+        _uiState.value = _uiState.value.copy(disabledRows = buildQueueRows(_uiState.value.disabledPage.model, disabledView))
+    }
     /**
      * 下一次载入完成后要定位的目标。新建时定位当前图片：进程被系统回收后重建，旧的列表位置
      * 对应的是折叠前的行，不再可信。
@@ -105,7 +118,7 @@ class PlaybackViewModel @JvmOverloads constructor(
         // 失效只请求下一次真实查询，不把通知或旧页面列表当成访问授权。
         catalogObservationJob = viewModelScope.launch {
             database.invalidationTracker.createFlow(
-                "sources", "image_records", "source_image_links", "source_directory_exclusions",
+                "sources", "image_records", "source_image_links", "source_directory_exclusions", "source_file_times",
                 emitInitialState = false,
             ).collect { catalogChanged() }
         }
@@ -273,6 +286,7 @@ class PlaybackViewModel @JvmOverloads constructor(
             queue = model,
             queueRows = buildQueueRows(model, queueView),
             disabledPage = loaded.disabledPage,
+            disabledRows = buildQueueRows(loaded.disabledPage.model, disabledView),
             isLoadingDisabled = false,
             multiReorder = multiReorderState(model),
             enabledCount = loaded.enabledCount,
@@ -389,7 +403,8 @@ class PlaybackViewModel @JvmOverloads constructor(
                     refresh()
                     return@launch
                 }
-                _uiState.value = _uiState.value.copy(disabledPage = page, isLoadingDisabled = false)
+                _uiState.value = _uiState.value.copy(disabledPage = page,
+                    disabledRows = buildQueueRows(page.model, disabledView), isLoadingDisabled = false)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failed: Exception) {
@@ -408,10 +423,32 @@ class PlaybackViewModel @JvmOverloads constructor(
         val records = ids.chunked(DisabledPlaybackList.PAGE_SIZE).flatMap { chunk ->
             database.p1SourceDao().getImagesByUris(chunk)
         }.associate { it.uri to (it.displayName to it.relativePath) }
-        DisabledPlaybackList.page(disabled, visibleLimit, records)
+        val page = DisabledPlaybackList.page(disabled, visibleLimit, records)
+        val links = ids.chunked(DisabledPlaybackList.PAGE_SIZE).flatMap {
+            database.p1SourceDao().getPlaybackLinksForUris(it)
+        }.distinctBy { it.uri }.associateBy { it.uri }
+        val items = page.entries.map { entry ->
+            links[entry.id]?.let { PlaybackItem(it.uri, it.displayName, it.relativePath, it.sourceId,
+                it.sourceOrder, it.sourceKind, it.sourceRootUri) }
+                ?: PlaybackItem(entry.id, entry.name, entry.detail, sourceId = "unlinked:${entry.id}",
+                    sourceKind = "SINGLE_DOCUMENT", sourceRootUri = entry.detail)
+        }
+        page.copy(model = buildQueueModel(items, PlaybackOrder.NATURAL_ASC, null,
+            sourcePathOf = { SourcePathFormatter.shorten(it.sourceRootUri.ifBlank { it.sourceId }) },
+            folderNameOf = { SourcePathFormatter.folderName(it) }))
     }
 
-    /** 只恢复明确点击且仍有逐项停用记录的 URI；不播放、不启用来源或子目录。 */
+    /** 只停用当前有效队列内的图片，不提交播放或改写原图。 */
+    fun disableImage(itemId: String) {
+        if (isBusy() || itemId !in _uiState.value.queue.positions) return
+        restoreDisabledImages(disabling = true) {
+            if (database.p1SourceDao().getImageByUri(itemId) == null) false else {
+                preferences.setImageEnabled(itemId, false)
+                true
+            }
+        }
+    }
+
     fun restoreDisabledImage(itemId: String) {
         if (isBusy() || itemId !in _uiState.value.disabledPage.disabledIds) return
         restoreDisabledImages {
@@ -431,17 +468,17 @@ class PlaybackViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun restoreDisabledImages(restore: () -> Boolean) {
+    private fun restoreDisabledImages(disabling: Boolean = false, restore: suspend () -> Boolean) {
         _uiState.value = _uiState.value.copy(isRestoringDisabled = true)
         viewModelScope.launch {
             val message = try {
                 if (withContext(Dispatchers.IO) { restore() }) {
-                    "已恢复图片启用；是否入队仍取决于图库来源、子目录和日期规则。"
-                } else "该图片已经恢复，未更改来源、顺序或播放历史。"
+                    if (disabling) "已停用此图片，未删除原图。" else "已恢复图片启用；是否入队仍取决于图库来源、子目录和日期规则。"
+                } else "图片状态已变化，未更改来源、顺序或播放历史。"
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failed: Exception) {
-                "恢复图片失败（${failed.javaClass.simpleName}）；请重新载入后查看，来源和历史未改。"
+                "更新图片启用状态失败（${failed.javaClass.simpleName}）；请重新载入后查看。"
             } finally {
                 _uiState.value = _uiState.value.copy(isRestoringDisabled = false)
             }
@@ -743,6 +780,7 @@ data class PlaybackUiState(
     val queueRows: List<QueueRow> = emptyList(),
     /** 有效播放队列之后的独立逐图停用列表；不是可播放队列，也不接收手动调序。 */
     val disabledPage: DisabledPlaybackPage = DisabledPlaybackPage(),
+    val disabledRows: List<QueueRow> = emptyList(),
     val isLoadingDisabled: Boolean = false,
     val isRestoringDisabled: Boolean = false,
     val multiReorder: MultiReorderUiState = MultiReorderUiState(),

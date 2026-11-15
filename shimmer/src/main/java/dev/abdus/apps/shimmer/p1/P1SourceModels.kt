@@ -24,6 +24,9 @@ data class P1ScannedImage(
     val sizeBytes: Long?,
     val width: Int? = null,
     val height: Int? = null,
+    val fileTimes: dev.abdus.apps.shimmer.p2.FileTimestamps = dev.abdus.apps.shimmer.p2.FileTimestamps(),
+    val directoryTimes: List<dev.abdus.apps.shimmer.p2.PlaybackDirectoryTime> = emptyList(),
+    val mediaType: String? = null,
 )
 
 data class P1ScanProgress(
@@ -78,6 +81,8 @@ interface P1TreeNode {
     val isDirectory: Boolean
     val mimeType: String?
     val sizeBytes: Long?
+    val fileTimes: dev.abdus.apps.shimmer.p2.FileTimestamps
+        get() = dev.abdus.apps.shimmer.p2.FileTimestamps()
 
     /** May throw when a provider returns an incomplete/unauthorized child listing. */
     fun children(): Iterable<P1TreeNode>

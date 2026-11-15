@@ -27,6 +27,10 @@ import dev.abdus.apps.shimmer.ui.settings.rememberImagePicker
 import kotlinx.coroutines.launch
 import dev.abdus.apps.shimmer.ui.theme.Spacing
 import dev.abdus.apps.shimmer.p10.WallpaperTarget
+import dev.abdus.apps.shimmer.ui.onboarding.LocalGuideController
+import dev.abdus.apps.shimmer.ui.onboarding.GuideStep
+import dev.abdus.apps.shimmer.ui.onboarding.GuideAnchor
+import dev.abdus.apps.shimmer.ui.onboarding.guideAnchor
 import dev.abdus.apps.shimmer.ui.navigation.wallpaperTargetViewModel
 
 /**
@@ -46,6 +50,11 @@ fun GalleryScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val guide = LocalGuideController.current
+    SideEffect {
+        if (interactive) guide?.observeSources(wallpaperTarget.name, uiState.sources.map { it.id },
+            uiState.isLoading || uiState.isImporting)
+    }
     // The source waiting for delete confirmation; nothing is deleted until the dialog confirms.
     var pendingDelete by remember { mutableStateOf<SourceItem?>(null) }
     // P9-GALLERY-04：添加来源的类型选择与系统选取器
@@ -77,8 +86,10 @@ fun GalleryScreen(
                 // P9-GALLERY-04：添加来源在新 UI 完成，不再跳转旧 P1 页
                 actions = {
                     IconButton(
+                        modifier = Modifier.guideAnchor(GuideAnchor.ADD_SOURCE, interactive),
                         onClick = { showAddSheet = true },
-                        enabled = interactive && !uiState.isImporting,
+                        enabled = interactive && !uiState.isImporting &&
+                            (!(guide?.progress?.active == true && guide.progress.current == GuideStep.SOURCE) || !uiState.isLoading),
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "添加来源")
                     }
@@ -86,6 +97,7 @@ fun GalleryScreen(
             )
         }
     ) { paddingValues ->
+        dev.abdus.apps.shimmer.ui.navigation.WallpaperTargetContent {
         Column(Modifier.fillMaxSize().padding(paddingValues)) {
             // P9-GALLERY-04：导入／扫描进度与取消。目录扫描可能耗时很久（用户的 26599 张图库约
             // 1 分钟），没有进度与取消就只剩一个无反馈的等待。
@@ -118,6 +130,7 @@ fun GalleryScreen(
                             SourceCard(
                                 source = source,
                                 onToggleEnabled = { viewModel.toggleSourceEnabled(source.id) },
+                                onSetMediaEnabled = { video, enabled -> viewModel.setSourceMediaEnabled(source.id, video, enabled) },
                                 onRescan = { viewModel.rescanSource(source.id) },
                                 // P9-PREVIEW-EDIT-01：点预览图本身换图；选取器返回时已申请持久读取授权
                                 onChangePreview = {
@@ -142,6 +155,7 @@ fun GalleryScreen(
                     }
                 }
             }
+        }
         }
     }
 
@@ -330,6 +344,11 @@ data class SourceItem(
     val type: SourceType,
     val imageCount: Int,
     val isEnabled: Boolean,
+    val imagesEnabled: Boolean = true,
+    val videosEnabled: Boolean = true,
+    val imageMediaCount: Int = 0,
+    val videoMediaCount: Int = 0,
+    val unknownMediaCount: Int = 0,
     val subdirectoryCount: Int = 0,
     /** P9-GALLERY-01：卡片预览图的 URI；来源没有图片时为 null。 */
     val previewUri: String? = null,

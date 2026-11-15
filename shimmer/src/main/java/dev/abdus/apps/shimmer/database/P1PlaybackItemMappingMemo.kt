@@ -42,6 +42,8 @@ internal class P1PlaybackItemMappingMemo {
                         sourceOrder = image.sourceOrder,
                         sourceKind = image.sourceKind,
                         sourceRootUri = image.sourceRootUri,
+                        fileTimes = image.fileTimes,
+                        directoryTimes = image.directoryTimes,
                     ),
                 )
             }

@@ -28,6 +28,46 @@ class P0DiagnosticPageActivityTest {
         (0 until view.childCount).flatMap { views(view.getChildAt(it)) } else emptyList()
     private fun button(activity: P0DiagnosticsActivity, text: String) =
         views(activity.window.decorView).filterIsInstance<Button>().single { it.text.toString() == text }
+    @Test fun stageGridIsBeforeRecordToolsAndP11OpensMediaSettings() {
+        val controller = open()
+        val activity = controller.get()
+        val stage = activity.window.decorView.findViewWithTag<android.widget.LinearLayout>("diagnostic-stages")
+        val record = activity.window.decorView.findViewWithTag<android.widget.LinearLayout>("diagnostic-records")
+        val column = stage.parent.parent as android.widget.LinearLayout
+        assertTrue(column.indexOfChild(stage.parent as View) < column.indexOfChild(record.parent as View))
+        assertFalse(button(activity, "P6 Android回归\n暂未开放").isEnabled)
+        button(activity, "P11 媒体与声音").performClick()
+        val intent = shadowOf(activity).nextStartedActivity
+        assertEquals(MainEntry("playback", true), DiagnosticStageEntries.readMainEntry(intent))
+        controller.pause().stop().destroy()
+    }
+
+    @Test fun experimentsAreCollapsedAndExpansionSurvivesRecreation() {
+        val controller = open()
+        val activity = controller.get()
+        assertEquals(View.GONE, activity.window.decorView.findViewWithTag<View>("diagnostic-labs").visibility)
+        button(activity, "旧版工具与实验入口 · 展开").performClick()
+        assertEquals(View.VISIBLE, activity.window.decorView.findViewWithTag<View>("diagnostic-labs").visibility)
+        controller.recreate()
+        assertEquals(View.VISIBLE, controller.get().window.decorView.findViewWithTag<View>("diagnostic-labs").visibility)
+        controller.pause().stop().destroy()
+    }
+    @Test fun summaryRefreshDoesNotRebuildStableEngineControlsOrExecuteActions() {
+        var rebuilds = 0
+        val scope = "test-ui113"
+        P0Controls.add(P0Controls.EngineControl(scope, { rebuilds++ }, {}))
+        val controller = open()
+        try {
+            val activity = controller.get()
+            val first = button(activity, "重建该 Engine 的 EGLSurface")
+            button(activity, "刷新摘要与 Engine 列表").performClick()
+            assertSame(first, button(activity, "重建该 Engine 的 EGLSurface"))
+            assertEquals(0, rebuilds)
+            button(activity, "壁纸画面重建工具 · 展开").performClick()
+            first.performClick()
+            assertEquals(1, rebuilds)
+        } finally { controller.pause().stop().destroy(); P0Controls.remove(scope) }
+    }
 
     @Test fun cancellingResetPreservesRunCountsRecordsAndEnabledState() {
         val controller = open(); val activity = controller.get()

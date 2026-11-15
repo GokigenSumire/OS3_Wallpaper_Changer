@@ -20,7 +20,7 @@ class P1PlaybackCursorReader(private val database: ShimmerDatabase) {
         currentCoroutineContext().ensureActive()
         val batches = ArrayList<P1PlaybackSourceLinks>()
         for (source in dao.getEnabledPlaybackSources()) {
-            batches.add(P1PlaybackSourceLinks(source, readSourceLinks(source.id)))
+            batches.add(P1PlaybackSourceLinks(source, readSourceLinks(source.id), dao.getFileTimes(source.id)))
         }
         currentCoroutineContext().ensureActive()
         P1PlaybackProjection.resolveSourceLinks(batches)
@@ -34,7 +34,7 @@ class P1PlaybackCursorReader(private val database: ShimmerDatabase) {
             val batches = ArrayList<P1PlaybackSourceLinks>()
             for (source in dao.getSources()) {
                 if (source.id in selected) {
-                    batches.add(P1PlaybackSourceLinks(source, readSourceLinks(source.id)))
+                    batches.add(P1PlaybackSourceLinks(source, readSourceLinks(source.id), dao.getFileTimes(source.id)))
                 }
             }
             currentCoroutineContext().ensureActive()
@@ -62,7 +62,9 @@ class P1PlaybackCursorReader(private val database: ShimmerDatabase) {
                 i.relativePath AS relativePath, l.sortOrder AS sortOrder
             FROM source_image_links l
             INNER JOIN image_records i ON i.id = l.imageId
+            INNER JOIN sources s ON s.id = l.sourceId
             WHERE l.sourceId = ? AND i.metadataState = 'COMMITTED'
+              ${dev.abdus.apps.shimmer.p1.P1MediaTypes.PLAYBACK_SQL}
               AND NOT EXISTS (
                   SELECT 1 FROM source_directory_exclusions x
                   WHERE x.sourceId = l.sourceId
@@ -77,7 +79,9 @@ class P1PlaybackCursorReader(private val database: ShimmerDatabase) {
                 i.relativePath AS relativePath, l.sortOrder AS sortOrder
             FROM source_image_links l
             INNER JOIN image_records i ON i.id = l.imageId
+            INNER JOIN sources s ON s.id = l.sourceId
             WHERE l.sourceId = ? AND i.metadataState = 'COMMITTED'
+              ${dev.abdus.apps.shimmer.p1.P1MediaTypes.PLAYBACK_SQL}
             ORDER BY l.sortOrder ASC, l.imageId ASC
         """.trimIndent()
 

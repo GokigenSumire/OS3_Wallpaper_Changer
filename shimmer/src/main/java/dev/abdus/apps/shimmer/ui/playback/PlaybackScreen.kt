@@ -40,6 +40,10 @@ import dev.abdus.apps.shimmer.ui.playback.components.QueueLevelRow
 import dev.abdus.apps.shimmer.ui.playback.components.QueueMoreRow
 import dev.abdus.apps.shimmer.ui.theme.Spacing
 import dev.abdus.apps.shimmer.p10.WallpaperTarget
+import dev.abdus.apps.shimmer.ui.onboarding.LocalGuideController
+import dev.abdus.apps.shimmer.ui.onboarding.GuideStep
+import dev.abdus.apps.shimmer.ui.onboarding.GuideAnchor
+import dev.abdus.apps.shimmer.ui.onboarding.guideAnchor
 import dev.abdus.apps.shimmer.ui.navigation.wallpaperTargetViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -64,9 +68,12 @@ fun PlaybackScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val guide = LocalGuideController.current
+    var requestedGuideOrder by remember { mutableStateOf<PlayOrder?>(null) }
     val listState = rememberLazyListState()
     val scrollScope = rememberCoroutineScope()
-    var showPlaybackSettings by rememberSaveable { mutableStateOf(false) }
+    val entry = dev.abdus.apps.shimmer.p0.LocalMainEntry.current
+    var showPlaybackSettings by rememberSaveable { mutableStateOf(entry.playbackSettings) }
     val settingsScrollState = rememberScrollState()
 
     fun returnToTop() {
@@ -107,6 +114,7 @@ fun PlaybackScreen(
     fun launchPicker() {
         val result = WallpaperUtil.openWallpaperPicker(context, wallpaperTarget)
         previewLaunchedAt = if (result == WallpaperUtil.PickerLaunchResult.DIRECT_PREVIEW) SystemClock.elapsedRealtime() else 0L
+        if (result != WallpaperUtil.PickerLaunchResult.FAILED) guide?.wallpaperPageOpened()
         wallpaperHint = pickerHint(result)
         if (result == WallpaperUtil.PickerLaunchResult.FAILED) showRoutes = true
     }
@@ -151,6 +159,25 @@ fun PlaybackScreen(
 
     val busy = uiState.isSavingOrder || uiState.isReloadingSources || uiState.isRestoringDisabled
 
+    LaunchedEffect(guide?.progress?.active, guide?.progress?.step, uiState.isLoading, showPlaybackSettings) {
+        val progress = guide?.progress ?: return@LaunchedEffect
+        if (!progress.active || progress.current !in listOf(GuideStep.ORDER, GuideStep.WALLPAPER)) return@LaunchedEffect
+        if (showPlaybackSettings) { showPlaybackSettings = false; return@LaunchedEffect }
+        if (!uiState.isLoading) {
+            val index = if (progress.current == GuideStep.ORDER) 2 else 1
+            withTimeoutOrNull(2000L) {
+                snapshotFlow { listState.layoutInfo.totalItemsCount }.first { it > index }
+                listState.animateScrollToItem(index)
+            }
+        }
+    }
+    LaunchedEffect(requestedGuideOrder, uiState.selectedOrder, uiState.isSavingOrder, uiState.isReloading) {
+        val requested = requestedGuideOrder ?: return@LaunchedEffect
+        if (!uiState.isSavingOrder && !uiState.isReloading && uiState.selectedOrder == requested) {
+            guide?.orderApplied()
+            requestedGuideOrder = null
+        }
+    }
     Scaffold(
         modifier = modifier,
         containerColor = Color.Transparent,
@@ -191,6 +218,7 @@ fun PlaybackScreen(
             }
         }
     ) { paddingValues ->
+        dev.abdus.apps.shimmer.ui.navigation.WallpaperTargetContent {
         if (showPlaybackSettings) {
             Box(Modifier.fillMaxSize().padding(paddingValues)) {
                 PlaybackSettingsPage(wallpaperTarget, scrollState = settingsScrollState,
@@ -229,16 +257,20 @@ fun PlaybackScreen(
                     // 播放顺序选择：经 P2 协调器保存，壁纸收到快照变化后按新顺序继续
                     PlayOrderSection(
                         selectedOrder = uiState.selectedOrder,
-                        onOrderSelected = { viewModel.setPlayOrder(it) },
+                        onOrderSelected = { requestedGuideOrder = it; viewModel.setPlayOrder(it) },
                         enabled = !busy
                     )
                 }
                 item(key = "status") {
-                    StatusSection(uiState, busy)
+                    if (busy || uiState.staticTestMode || uiState.activeRuleName != null) StatusSection(uiState, busy)
                 }
                 item(key = "queue-title") {
-                    QueueTitleSection(uiState, busy, onLocateCurrent = { viewModel.locateCurrent() },
-                        onMultiToggle = { viewModel.setMultiReorder(it) })
+                    Column {
+                        HorizontalDivider(Modifier.padding(vertical = Spacing.m), thickness = 2.dp,
+                            color = MaterialTheme.colorScheme.outlineVariant)
+                        QueueTitleSection(uiState, busy, onLocateCurrent = { viewModel.locateCurrent() },
+                            onMultiToggle = { viewModel.setMultiReorder(it) })
+                    }
                 }
                 queueRows(
                     uiState, busy, viewModel,
@@ -252,21 +284,19 @@ fun PlaybackScreen(
                 item(key = DisabledPlaybackList.TITLE_KEY, contentType = "disabled-title") {
                     DisabledPlaybackTitle(uiState, busy, onRestoreAll = { showRestoreAllConfirm = true })
                 }
-                itemsIndexed(uiState.disabledPage.entries,
-                    key = { _, entry -> DisabledPlaybackList.rowKey(entry.id) },
-                    contentType = { _, _ -> "disabled-image" },
-                ) { index, entry ->
-                    QueueImageRow(
-                        image = DisabledPlaybackList.row(entry, index),
-                        enabled = !busy,
-                        manual = false,
-                        actionsExpanded = entry.id == retainedActionItemId,
-                        onToggleActions = {
-                            expandedActionItemId = PlaybackRowDisclosure.toggle(expandedActionItemId, entry.id, actionItemIds)
-                        },
-                        onPlay = {}, onSelect = {}, onMoveUp = {}, onMoveDown = {}, onMoveTo = {},
-                        restoreAction = { viewModel.restoreDisabledImage(entry.id) },
-                    )
+                items(uiState.disabledRows, key = { "disabled-group|${it.key}" }, contentType = { it::class }) { row ->
+                    when (row) {
+                        is QueueRow.GroupHeader -> QueueGroupHeaderRow(row, row.previewItem.id, !busy, {}, {})
+                        is QueueRow.Level -> QueueLevelRow(row, onToggle = { viewModel.toggleDisabledLevel(row.levelKey) })
+                        is QueueRow.More -> QueueMoreRow(row, onShowMore = { viewModel.showMoreDisabledRows(row.pageKey) })
+                        is QueueRow.Image -> QueueImageRow(
+                            image = row, enabled = !busy, manual = false,
+                            actionsExpanded = row.item.id == retainedActionItemId,
+                            onToggleActions = { expandedActionItemId = PlaybackRowDisclosure.toggle(expandedActionItemId, row.item.id, actionItemIds) },
+                            onPlay = {}, onSelect = {}, onMoveUp = {}, onMoveDown = {}, onMoveTo = {},
+                            restoreAction = { viewModel.restoreDisabledImage(row.item.id) },
+                        )
+                    }
                 }
                 if (uiState.disabledPage.remainingCount > 0 || uiState.isLoadingDisabled) {
                     item(key = DisabledPlaybackList.MORE_KEY, contentType = "disabled-more") {
@@ -281,6 +311,7 @@ fun PlaybackScreen(
                     }
                 }
             }
+        }
         }
     }
 
@@ -334,7 +365,8 @@ fun PlaybackScreen(
                             showRoutes = false
                             val result = WallpaperUtil.openSystemWallpaperChooser(context)
                             previewLaunchedAt = 0L
-                            wallpaperHint = pickerHint(result)
+                            if (result != WallpaperUtil.PickerLaunchResult.FAILED) guide?.wallpaperPageOpened()
+        wallpaperHint = pickerHint(result)
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("系统动态壁纸选择器") }
@@ -460,12 +492,7 @@ private fun StatusSection(uiState: PlaybackUiState, busy: Boolean) {
             modifier = Modifier.fillMaxWidth().padding(Spacing.m),
             verticalArrangement = Arrangement.spacedBy(Spacing.xs)
         ) {
-            val source = uiState.activeRuleName?.let { "日期规则“$it”" } ?: "普通目录"
-            Text(
-                text = "已启用图片：${uiState.enabledCount}（$source）",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            uiState.activeRuleName?.let { Text("日期规则：$it", style = MaterialTheme.typography.bodyMedium) }
             if (uiState.staticTestMode) {
                 Text("静态验收已开启：过渡与特效暂停（设置 → 高级）",
                     style = MaterialTheme.typography.bodySmall,
@@ -488,7 +515,7 @@ private fun WallpaperSection(
     onOtherRoutes: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-        OutlinedButton(onClick = onSetWallpaper, modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = onSetWallpaper, modifier = Modifier.fillMaxWidth().guideAnchor(GuideAnchor.WALLPAPER)) {
             Text(if (isActiveWallpaper) "重新设为壁纸" else "设为壁纸")
         }
         TextButton(onClick = onOtherRoutes, modifier = Modifier.fillMaxWidth()) {
@@ -553,7 +580,9 @@ private fun QueueTitleSection(uiState: PlaybackUiState, busy: Boolean, onLocateC
 
 @Composable
 private fun DisabledPlaybackTitle(uiState: PlaybackUiState, busy: Boolean, onRestoreAll: () -> Unit) {
-    BlurredCard(modifier = Modifier.fillMaxWidth()) {
+    Column(Modifier.fillMaxWidth().padding(top = 24.dp)) {
+        HorizontalDivider(thickness = 2.dp, color = MaterialTheme.colorScheme.outlineVariant)
+        BlurredCard(Modifier.fillMaxWidth().padding(top = Spacing.m), shape = MaterialTheme.shapes.large) {
         Column(modifier = Modifier.fillMaxWidth().padding(Spacing.m),
             verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -566,6 +595,7 @@ private fun DisabledPlaybackTitle(uiState: PlaybackUiState, busy: Boolean, onRes
             Text(if (uiState.disabledPage.totalCount == 0) "暂无逐张停用的图片。" else
                 "点图片展开恢复；来源或子目录仍停用时不会加入播放队列。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         }
     }
 }
@@ -598,6 +628,8 @@ private fun LazyListScope.queueRows(
                 actionsExpanded = row.item.id == expandedActionItemId,
                 onToggleActions = { onToggleActions(row.item.id) },
                 onPlay = { viewModel.clickToPlay(row.item.id) },
+                onDisable = { viewModel.disableImage(row.item.id) },
+                wallpaperTarget = viewModel.wallpaperTarget,
                 onSelect = { viewModel.selectItem(row.item.id) },
                 onMoveUp = { viewModel.moveItem(row.item.id, -1) },
                 onMoveDown = { viewModel.moveItem(row.item.id, 1) },
@@ -698,5 +730,9 @@ enum class PlayOrder(val displayName: String) {
     NATURAL_ASC("名称升序"),
     NATURAL_DESC("名称降序"),
     RANDOM("随机"),
-    MANUAL("手动排序")
+    MANUAL("手动排序"),
+    IMAGE_CREATED_ASC("图片创建时间升序"), IMAGE_CREATED_DESC("图片创建时间降序"),
+    IMAGE_MODIFIED_ASC("图片修改时间升序"), IMAGE_MODIFIED_DESC("图片修改时间降序"),
+    FOLDER_CREATED_ASC("文件夹创建时间升序"), FOLDER_CREATED_DESC("文件夹创建时间降序"),
+    FOLDER_MODIFIED_ASC("文件夹修改时间升序"), FOLDER_MODIFIED_DESC("文件夹修改时间降序")
 }

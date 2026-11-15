@@ -14,6 +14,7 @@ internal fun samePlaybackQueueConfiguration(left: PlaybackSnapshot?, right: Play
         PlaybackOrder.RANDOM -> left?.randomRound == right?.randomRound &&
             left?.previousRoundLastId == right?.previousRoundLastId &&
             left?.queueFingerprint == right?.queueFingerprint
+        else -> true // Time queues are derived from the authoritative, revision-observed catalog.
     }
 }
 

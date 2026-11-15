@@ -1,6 +1,7 @@
 package dev.abdus.apps.shimmer.p4
 
 /** Raw text of the rule editor, turned into a [PlaybackRule] or a Chinese error. */
+@kotlinx.serialization.Serializable
 data class RuleForm(
     val id: String,
     val name: String = "",

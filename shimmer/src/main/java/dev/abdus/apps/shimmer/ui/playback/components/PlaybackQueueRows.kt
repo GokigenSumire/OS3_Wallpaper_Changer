@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -81,7 +82,8 @@ fun QueueGroupHeaderRow(
     val shape = MaterialTheme.shapes.large
     BlurredCard(
         modifier = modifier
-            .fillMaxWidth()
+            .fillMaxWidth().padding(top = 14.dp)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
             .then(if (header.highlighted) Modifier.border(2.dp, highlight.border, shape) else Modifier),
         shape = shape,
     ) {
@@ -105,14 +107,14 @@ fun QueueGroupHeaderRow(
             )
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = "第 ${header.groupIndex} 组/共 ${header.groupCount} 组",
+                    text = "第 ${header.groupIndex} 组   ${header.sourcePath.trimEnd('/').substringAfterLast('/')}",
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
                 Text(
                     text = buildString {
                         append(GallerySourceSummary.kindLabel(header.group.kind))
-                        append(" · ${header.itemCount} 张")
+                        append("   ${header.itemCount} 张")
                         if (header.continued) append("（续段，同一来源）")
                     },
                     style = MaterialTheme.typography.bodySmall,
@@ -155,39 +157,11 @@ fun QueueLevelRow(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val state = if (level.expanded) "已展开" else "已折叠"
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(start = indentOf(level.depth))
-            .heightIn(min = 48.dp)
-            .clip(MaterialTheme.shapes.medium)
-            .clickable(onClickLabel = if (level.expanded) "折叠" else "展开", role = Role.Button, onClick = onToggle)
-            .semantics { stateDescription = state },
-        color = GlassEffectDefaults.cardContainerColor(),
-        shape = MaterialTheme.shapes.medium,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = Spacing.s, vertical = Spacing.s),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-        ) {
-            Icon(
-                imageVector = if (level.expanded) Icons.Default.KeyboardArrowDown else Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = "${level.label} · 共 ${level.totalCount} 张",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (level.containsCurrent && !level.expanded) CurrentTag()
-        }
-    }
+    dev.abdus.apps.shimmer.ui.components.FolderLevelHeader(
+        name = level.label, count = level.totalCount, depth = level.depth,
+        expanded = level.expanded, state = if (level.containsCurrent) "播放中" else null,
+        onToggle = onToggle, modifier = modifier,
+    )
 }
 
 /**
@@ -204,6 +178,7 @@ fun QueueImageRow(
     actionsExpanded: Boolean,
     onToggleActions: () -> Unit,
     onPlay: () -> Unit,
+    onDisable: () -> Unit = {},
     onSelect: () -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
@@ -211,6 +186,7 @@ fun QueueImageRow(
     modifier: Modifier = Modifier,
     /** 非空时是停用段：沿用缩略图和展开行为，只给恢复操作，绝不播放或参与调序。 */
     restoreAction: (() -> Unit)? = null,
+    wallpaperTarget: dev.abdus.apps.shimmer.p10.WallpaperTarget = dev.abdus.apps.shimmer.p10.WallpaperTarget.HOME,
 ) {
     val actions = PlaybackRowDisclosure.actions(actionsExpanded, manual && !multiMode && restoreAction == null, image.selected)
     val highlight = highlightColors()
@@ -253,12 +229,20 @@ fun QueueImageRow(
                 if (restoreAction != null) {
                     OutlinedButton(onClick = restoreAction, enabled = enabled) { Text("恢复启用") }
                 } else if (!multiMode) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
-                    OutlinedButton(onClick = onPlay, enabled = enabled) { Text("播放此图片") }
-                    if (actions.showReorderSelection) {
-                        OutlinedButton(onClick = onSelect, enabled = enabled) {
-                            Text(if (image.selected) "取消调序选择" else "调序选择")
-                        }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Spacing.s), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = onPlay, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)) {
+                        Text("播放此图片", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    OutlinedButton(onClick = onDisable, enabled = enabled, modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp)) {
+                        Text("停用此图片", style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    ItemSoundButton(image.item.id, image.item.displayName, wallpaperTarget, enabled)
+                }
+                if (actions.showReorderSelection) {
+                    OutlinedButton(onClick = onSelect, enabled = enabled) {
+                        Text(if (image.selected) "取消调序选择" else "调序选择")
                     }
                 }
                 }

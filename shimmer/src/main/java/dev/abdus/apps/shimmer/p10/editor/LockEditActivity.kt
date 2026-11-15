@@ -20,6 +20,7 @@ open class LockEditActivity : P3EditActivity() {
     private var preview: LockEditorPreview? = null
     private var lifecycleExit = false
     override val editorTarget get() = WallpaperTarget.LOCK
+    override fun guidePracticeSession(): String? = authenticated?.guidePracticeSession
     override val editorFrameStats get() = lockStats
     override val noEditorMessage get() = "锁屏编辑请求已失效，未保存修改。请从锁屏重新发起编辑并完成系统安全解锁。"
     override fun editorDiagnosticImageLabel(imageId: String) = "LOCK_IMAGE"

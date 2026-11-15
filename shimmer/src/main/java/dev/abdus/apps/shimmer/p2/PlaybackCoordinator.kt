@@ -18,6 +18,8 @@ data class PlaybackItem(
     val sourceOrder: Long = 0,
     val sourceKind: String = "",
     val sourceRootUri: String = "",
+    val fileTimes: FileTimestamps = FileTimestamps(),
+    val directoryTimes: List<PlaybackDirectoryTime> = emptyList(),
 )
 
 @Serializable
@@ -26,6 +28,16 @@ enum class PlaybackOrder {
     NATURAL_DESC,
     RANDOM,
     MANUAL,
+    IMAGE_CREATED_ASC, IMAGE_CREATED_DESC,
+    IMAGE_MODIFIED_ASC, IMAGE_MODIFIED_DESC,
+    FOLDER_CREATED_ASC, FOLDER_CREATED_DESC,
+    FOLDER_MODIFIED_ASC, FOLDER_MODIFIED_DESC,
+
+    ;
+    val isTimeOrder get() = this != NATURAL_ASC && this != NATURAL_DESC && this != RANDOM && this != MANUAL
+    val folders get() = name.startsWith("FOLDER_")
+    val creation get() = name.contains("_CREATED_")
+    val descending get() = name.endsWith("_DESC")
 }
 
 enum class PlaybackDirection {
@@ -141,6 +153,7 @@ class PlaybackCoordinator(
     private val itemsById = linkedMapOf<String, PlaybackItem>()
     private var sortedAscending: List<String>? = null
     private var sortedDescending: List<String>? = null
+    private val timeOrders = HashMap<PlaybackOrder, List<String>>()
     private var catalogFingerprintCache: Int? = null
     private var catalogSourcesCache: Set<String>? = null
     private var randomQueueCache: RandomQueueCache? = null
@@ -202,7 +215,8 @@ class PlaybackCoordinator(
         items.forEach { item ->
             preparationCounter?.visit()
             require(item.id.isNotBlank()) { "Playback item identity is required" }
-            deduplicated.putIfAbsent(item.id, item)
+            deduplicated.putIfAbsent(item.id, item.copy(
+                directoryTimes = Collections.unmodifiableList(ArrayList(item.directoryTimes))))
         }
         // Every page action and wallpaper refresh re-supplies the catalog. Keep the sorted
         // orders when it is unchanged; re-sorting thousands of paths per action stalled P2.
@@ -211,6 +225,7 @@ class PlaybackCoordinator(
             itemsById.putAll(deduplicated)
             sortedAscending = null
             sortedDescending = null
+            timeOrders.clear()
             catalogFingerprintCache = null
             catalogSourcesCache = null
             randomQueueCache = null
@@ -253,6 +268,7 @@ class PlaybackCoordinator(
             // Materialise the round now so the page can show the upcoming random order instead
             // of waiting for the wallpaper to play the first image.
             PlaybackOrder.RANDOM -> randomQueue(old.randomRound, old.previousRoundLastId)
+            else -> timeSortedIds(order)
         }
         committed = old.copy(
             order = order,
@@ -291,6 +307,7 @@ class PlaybackCoordinator(
             PlaybackOrder.NATURAL_DESC -> sortedIds(descending = true)
             PlaybackOrder.MANUAL -> savedManualIds(committed.queueIds)
             PlaybackOrder.RANDOM -> effectiveRandomIds(committed.queueIds)
+            else -> timeSortedIds(committed.order)
         }
         return ids.mapNotNull(itemsById::get)
     }
@@ -699,6 +716,7 @@ class PlaybackCoordinator(
         PlaybackOrder.NATURAL_DESC -> sortedIds(descending = true)
         PlaybackOrder.MANUAL -> savedManualIds(state.queueIds)
         PlaybackOrder.RANDOM -> effectiveRandomIds(state.queueIds)
+        else -> timeSortedIds(state.order)
     }
 
     private fun sanitize(state: PlaybackSnapshot): PlaybackSnapshot {
@@ -852,7 +870,8 @@ class PlaybackCoordinator(
             left.relativePath == right.relativePath && left.sourceOrder == right.sourceOrder &&
             sources.equalId(left.sourceId, right.sourceId) &&
             sources.equalKind(left.sourceKind, right.sourceKind) &&
-            sources.equalRoot(left.sourceRootUri, right.sourceRootUri)
+            sources.equalRoot(left.sourceRootUri, right.sourceRootUri) &&
+            left.fileTimes == right.fileTimes && left.directoryTimes == right.directoryTimes
 
     /**
      * 同一次完整比较中，只复用已成功 String.equals 的引用对。String不可变；canonical来源
@@ -932,6 +951,44 @@ class PlaybackCoordinator(
      * every sibling comparison for descending order keeps a parent directory ahead of its child;
      * reversing the completed list would put a child before its parent and interleave trees.
      */
+    private fun timeSortedIds(order: PlaybackOrder): List<String> = timeOrders.getOrPut(order) {
+        check(order.isTimeOrder)
+        preparationCounter?.let { it.queueRebuilds++ }
+        val ranks = sortedIds(descending = false).withIndex().associate { it.value to it.index }
+        fun time(value: FileTimestamps) = (if (order.creation) value.createdMillis else value.modifiedMillis)?.takeIf { it > 0 }
+        fun compareTimes(left: Long?, right: Long?): Int = when {
+            left == null -> if (right == null) 0 else 1
+            right == null -> -1
+            order.descending -> right.compareTo(left)
+            else -> left.compareTo(right)
+        }
+        class Key(val item: PlaybackItem) {
+            val parents = pathParts(item).dropLast(1)
+            val parts = parents.map(::NaturalText)
+            val times = item.directoryTimes.associate { it.path to time(it.times) }
+            val paths = parents.indices.map { parents.take(it + 1).joinToString("/") }
+        }
+        itemsById.values.map(::Key).sortedWith { left, right ->
+            var result = 0
+            if (!order.folders) {
+                result = compareTimes(time(left.item.fileTimes), time(right.item.fileTimes))
+            } else if (left.item.sourceId != right.item.sourceId) {
+                result = compareTimes(left.times[""], right.times[""])
+                if (result == 0) result = left.item.sourceOrder.compareTo(right.item.sourceOrder)
+                if (result == 0) result = left.item.sourceId.compareTo(right.item.sourceId)
+            } else {
+                for (index in 0 until minOf(left.parents.size, right.parents.size)) {
+                    if (left.parents[index] == right.parents[index]) continue
+                    result = compareTimes(left.times[left.paths[index]], right.times[right.paths[index]])
+                    if (result == 0) result = naturalCompare(left.parts[index], right.parts[index])
+                    break
+                }
+                if (result == 0) result = left.parents.size.compareTo(right.parents.size)
+            }
+            if (result != 0) result else ranks.getValue(left.item.id).compareTo(ranks.getValue(right.item.id))
+        }.map { it.item.id }.frozenIds()
+    }
+
     private fun sortedIds(descending: Boolean): List<String> {
         (if (descending) sortedDescending else sortedAscending)?.let { return it }
         // Tokenise once per item; splitting with a regex inside every comparison dominated

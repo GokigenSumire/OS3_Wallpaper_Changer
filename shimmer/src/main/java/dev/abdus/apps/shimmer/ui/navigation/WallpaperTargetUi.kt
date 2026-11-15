@@ -12,8 +12,8 @@ import dev.abdus.apps.shimmer.p10.WallpaperTarget
 /** 页面切域只换读取者；不写播放器当前项、历史或应用系统壁纸。 */
 object WallpaperTargetUi {
     fun label(target: WallpaperTarget): String = when (target) {
-        WallpaperTarget.HOME -> "桌面 HOME"
-        WallpaperTarget.LOCK -> "锁屏 LOCK"
+        WallpaperTarget.HOME -> "桌面"
+        WallpaperTarget.LOCK -> "锁屏"
     }
 
     fun stateKey(route: String, target: WallpaperTarget): String = "${target.name}:$route"

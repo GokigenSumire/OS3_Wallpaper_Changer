@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(file_times LANGUAGES C)
+add_library(file_times SHARED file_times.c)
+target_compile_definitions(file_times PRIVATE _GNU_SOURCE)
+target_compile_options(file_times PRIVATE -Wall -Wextra -Werror)
+target_link_options(file_times PRIVATE -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384)

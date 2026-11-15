@@ -80,6 +80,19 @@ class LockEditorBridgeTest {
         assertFalse(intent.toUri(0).contains("private/LOCK-image"))
         return intent.getStringExtra(LockEditorBridge.EXTRA_TOKEN)!!
     }
+    @Test fun guideMetadataDoesNotBypassAuthenticationAndSurvivesOnlyAuthenticatedHandoff() {
+        val rejected = Pending()
+        assertTrue(LockEditorBridge.launchPrepared(context, rejected, engine, "lesson"))
+        var token = shadowOf(context as android.app.Application).nextStartedActivity.getStringExtra(LockEditorBridge.EXTRA_TOKEN)!!
+        assertNull(LockEditorBridge.consumeAuthenticated(token))
+        assertEquals(0, rejected.authentications)
+        val accepted = Pending()
+        assertTrue(LockEditorBridge.launchPrepared(context, accepted, engine, "lesson"))
+        token = shadowOf(context as android.app.Application).nextStartedActivity.getStringExtra(LockEditorBridge.EXTRA_TOKEN)!!
+        assertTrue(LockEditorBridge.beginAuthentication(token))
+        assertTrue(LockEditorBridge.systemSucceeded(token, false))
+        assertEquals("lesson", LockEditorBridge.consumeAuthenticated(token)!!.guidePracticeSession)
+    }
 
     @Test fun unclaimedSystemUiCapabilityReleasesHoldAtFiveSeconds() {
         val pending = Pending()

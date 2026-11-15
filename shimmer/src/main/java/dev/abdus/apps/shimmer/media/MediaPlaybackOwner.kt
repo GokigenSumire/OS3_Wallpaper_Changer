@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Surface
 import androidx.media3.common.C
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -29,12 +30,16 @@ enum class MediaFrameState { PREPARING, VIDEO, STILL, ENDED, FALLBACK_ERROR, FAL
 class MediaPlaybackOwner(
     context: Context,
     private val requestRender: () -> Unit,
+    private val audioEligible: Boolean = false,
+    private val wallpaperTarget: dev.abdus.apps.shimmer.p10.WallpaperTarget = dev.abdus.apps.shimmer.p10.WallpaperTarget.HOME,
     private val playerFactory: (Context, androidx.media3.datasource.DataSource.Factory) -> Player = { app, source ->
-        ExoPlayer.Builder(app).setLooper(Looper.getMainLooper()).setMediaSourceFactory(DefaultMediaSourceFactory(source)).build()
+        ExoPlayer.Builder(app).setLooper(Looper.getMainLooper())
+            .setMediaSourceFactory(DefaultMediaSourceFactory(source)).build()
     },
 ) {
     private val app = context.applicationContext
     private val allowed = AtomicBoolean(true)
+    private val soundVisible = AtomicBoolean(false)
     private val sessions = ConcurrentHashMap.newKeySet<Session>()
     private val restartPolicy = MediaRestartPolicy()
     companion object {
@@ -45,6 +50,16 @@ class MediaPlaybackOwner(
         private val owners = Collections.newSetFromMap(WeakHashMap<MediaPlaybackOwner, Boolean>())
         private val transientPermits = Semaphore(2)
         private var transientHolds = 0
+        // Main looper only. A consumed foreground frame establishes the audible candidate.
+        private val audioCandidates = LinkedHashSet<Session>()
+        private val audioAttributes = AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build()
+        private fun reconcileAudio() {
+            val selected = audioCandidates.lastOrNull { it.canPlaySound() }
+            // Mute and abandon focus first, so a crossfade or two visible engines cannot overlap audio.
+            audioCandidates.filter { it !== selected }.forEach { it.applySound(false) }
+            selected?.applySound(true)
+        }
         /** Poster/thumbnail decoding yields continuous decoders; all app video leases stay <= 2. */
         suspend fun <T> withTransientDecoder(block: suspend () -> T): T = transientPermits.withPermit {
             val lease = Any()
@@ -73,7 +88,7 @@ class MediaPlaybackOwner(
         }
         fun settingsChanged() { onMain { synchronized(owners) { owners.toList() }.forEach { owner ->
             owner.sessions.forEach { it.updateMode() }
-        } } }
+        }; reconcileAudio() } }
         private fun onMain(block: () -> Unit) {
             if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block)
         }
@@ -86,7 +101,8 @@ class MediaPlaybackOwner(
     init { synchronized(owners) { owners.add(this) } }
     fun setAllowed(value: Boolean) {
         allowed.set(value)
-        onMain { sessions.forEach { it.visibilityChanged() } }
+        soundVisible.set(value)
+        onMain { sessions.forEach { it.visibilityChanged() }; reconcileAudio() }
     }
     fun observeKeyguard(locked: Boolean) { onMain {
         if (restartPolicy.observe(locked, MediaPreferences.restartOnLock(app), MediaPreferences.restartOnUnlock(app))) {
@@ -111,10 +127,30 @@ class MediaPlaybackOwner(
             private set
         @Volatile var transientlyPaused: Boolean = false
             private set
+        @Volatile var resumeFrameHeld: Boolean = false
+            private set
         private val closed = AtomicBoolean(false)
         private var player: Player? = null
         private var position = 0L
         private var hasFrame = false
+        private var hasAudioTrack = false
+        private var soundApplied = false
+        private val soundFocus = WallpaperSoundFocus(app) { audible ->
+            player?.volume = if (audible && soundApplied && canPlaySound()) 1f else 0f
+        }
+        internal fun canPlaySound(): Boolean = audioEligible && allowed.get() && !closed.get() && soundVisible.get() &&
+            player != null && hasFrame && hasAudioTrack && MediaSoundService.isReady && mode != MotionMode.STILL && MediaPreferences.soundEnabled(app, clip.kind) &&
+            MediaPreferences.itemSoundEnabled(app, clip.uri, wallpaperTarget)
+        internal fun applySound(enabled: Boolean) {
+            val instance = player ?: return
+            if (soundApplied == enabled) return
+            if (!enabled) soundFocus.stop()
+            instance.trackSelectionParameters = instance.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, !enabled).build()
+            instance.setAudioAttributes(audioAttributes, false)
+            soundApplied = enabled
+            if (enabled) soundFocus.start()
+        }
         private val timeout = Runnable {
             if (!closed.get() && allowed.get() && !hasFrame && player != null) {
                 state = MediaFrameState.FALLBACK_TIMEOUT
@@ -129,6 +165,7 @@ class MediaPlaybackOwner(
             val changed = next != mode
             mode = next
             if (changed) {
+                resumeFrameHeld = false
                 position = 0
                 hasFrame = false
                 releasePlayer(savePosition = false)
@@ -143,6 +180,7 @@ class MediaPlaybackOwner(
         }
         internal fun visibilityChanged() {
             if (!allowed.get() || transientHolds > 0) {
+                resumeFrameHeld = mode != MotionMode.STILL && (hasFrame || resumeFrameHeld)
                 transientlyPaused = allowed.get() && transientHolds > 0 && mode != MotionMode.STILL &&
                     (state == MediaFrameState.VIDEO || transientlyPaused)
                 releasePlayer(); waiting.remove(this)
@@ -154,6 +192,7 @@ class MediaPlaybackOwner(
         }
         internal fun restartFromBeginning() {
             if (closed.get() || mode == MotionMode.STILL) return
+            resumeFrameHeld = false
             releasePlayer(savePosition = false)
             position = 0L
             hasFrame = false
@@ -175,6 +214,7 @@ class MediaPlaybackOwner(
             waiting.remove(this)
             state = MediaFrameState.PREPARING
             hasFrame = false
+            hasAudioTrack = false
             outputGeneration++
             producerReady = false
             try {
@@ -190,6 +230,7 @@ class MediaPlaybackOwner(
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build()
                 instance.repeatMode = if (mode == MotionMode.LOOP) Player.REPEAT_MODE_ONE else Player.REPEAT_MODE_OFF
                 instance.volume = 0f
+                soundApplied = false
                 instance.addListener(object : Player.Listener {
                     override fun onRenderedFirstFrame() {
                         if (player !== instance || closed.get() || !allowed.get()) return
@@ -199,6 +240,8 @@ class MediaPlaybackOwner(
                     }
                     override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                         if (player !== instance || closed.get()) return
+                        val audio = tracks.groups.any { it.type == C.TRACK_TYPE_AUDIO && it.isSupported }
+                        if (hasAudioTrack != audio) { hasAudioTrack = audio; reconcileAudio() }
                         val hdr = tracks.groups.any { group ->
                             group.type == C.TRACK_TYPE_VIDEO && (0 until group.length).any { index ->
                                 group.isTrackSelected(index) && group.getTrackFormat(index).colorInfo?.colorTransfer in
@@ -253,7 +296,13 @@ class MediaPlaybackOwner(
         fun frameConsumed(generation: Long = outputGeneration) { onMain {
             if (!closed.get() && allowed.get() && mode != MotionMode.STILL && player != null &&
                 producerReady && generation == outputGeneration) {
+                val firstConsumed = !hasFrame
                 hasFrame = true; state = MediaFrameState.VIDEO; main.removeCallbacks(timeout)
+                resumeFrameHeld = false
+                if (firstConsumed) {
+                    audioCandidates.remove(this); audioCandidates.add(this)
+                    reconcileAudio()
+                }
             }
         } }
         fun close(afterDetach: () -> Unit = {}) {
@@ -267,7 +316,10 @@ class MediaPlaybackOwner(
         private fun releasePlayer(savePosition: Boolean = true) {
             main.removeCallbacks(timeout)
             val old = player
+            applySound(false)
+            audioCandidates.remove(this)
             player = null
+            reconcileAudio()
             producerReady = false
             if (old != null) outputGeneration++
             if (old != null) {

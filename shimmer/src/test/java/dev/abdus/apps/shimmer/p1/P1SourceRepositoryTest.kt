@@ -103,6 +103,8 @@ class P1SourceRepositoryTest {
         assertEquals(1, playback.size)
         assertEquals("新增图片.png", playback.single().displayName)
         assertEquals("file", Uri.parse(playback.single().uri).scheme)
+        // The fixture provides no original times: the newly created app copy cannot supply them.
+        assertEquals(dev.abdus.apps.shimmer.p2.FileTimestamps(), playback.single().fileTimes)
     }
 
     @Test
@@ -279,10 +281,29 @@ class P1SourceRepositoryTest {
         }
     }
 
+    @Test fun appCopyAndLaterRescanKeepOriginalProviderTimeInsteadOfCopyTime() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, ShimmerDatabase::class.java).allowMainThreadQueries().build()
+        database = db
+        val provider = OpaqueImageProvider(File(context.cacheDir, "time-original.png").apply { writeBytes(ONE_PIXEL_PNG) },
+            modifiedMillis = 1700000000123)
+        provider.attachInfo(context, ProviderInfo().apply { authority = "test.copy.times" })
+        ShadowContentResolver.registerProviderInternal("test.copy.times", provider)
+        val repository = P1SourceRepository(context, db)
+        val imported = repository.importImageBatch(listOf(Uri.parse("content://test.copy.times/document/42")))
+        assertEquals(P1ImportState.COMMITTED, imported.state)
+        val first = db.p1SourceDao().getEnabledPlaybackImages().single()
+        assertEquals(dev.abdus.apps.shimmer.p2.FileTimestamps(null, 1700000000123), first.fileTimes)
+        File(Uri.parse(first.uri).path!!).setLastModified(1000)
+        assertEquals(P1ImportState.COMMITTED, repository.rescan(imported.sourceId).state)
+        assertEquals(first.fileTimes, db.p1SourceDao().getEnabledPlaybackImages().single().fileTimes)
+    }
+
     /** External provider fixture: opaque IDs are intentionally unrelated to display names. */
     private class OpaqueImageProvider(
         private val image: File,
         private val displayName: String = "新增图片.png",
+        private val modifiedMillis: Long? = null,
     ) : ContentProvider() {
         override fun onCreate(): Boolean = true
         override fun getType(uri: Uri): String = "image/png"
@@ -294,6 +315,7 @@ class P1SourceRepositoryTest {
                     when (column) {
                         OpenableColumns.DISPLAY_NAME -> displayName
                         OpenableColumns.SIZE -> image.length()
+                        android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED -> modifiedMillis
                         else -> null
                     }
                 }.toTypedArray<Any?>())

@@ -1,80 +1,39 @@
 package dev.abdus.apps.shimmer.ui.settings.components
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import dev.abdus.apps.shimmer.ui.components.BlurredCard
 import dev.abdus.apps.shimmer.ui.theme.Spacing
 import dev.abdus.apps.shimmer.ui.theme.ThemeMode
 
-/**
- * 外观设置卡片
- * 主题（跟随系统 / 浅色 / 深色）；静态验收统一放在高级项。
- */
 @Composable
-fun AppearanceCard(
-    themeMode: ThemeMode,
-    onThemeModeSelected: (ThemeMode) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    BlurredCard(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(Spacing.m),
-            verticalArrangement = Arrangement.spacedBy(Spacing.m)
-        ) {
-            Text(
-                text = "外观",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-
-            // 主题：整行可点，读屏按单选组朗读；选择立即生效并保存
-            Column {
-                Text(
-                    text = "主题",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Column(
-                    modifier = Modifier.selectableGroup(),
-                    verticalArrangement = Arrangement.spacedBy(Spacing.xs)
-                ) {
+fun AppearanceCard(themeMode: ThemeMode, onThemeModeSelected: (ThemeMode) -> Unit, modifier: Modifier = Modifier) {
+    var expanded by remember { mutableStateOf(false) }
+    BlurredCard(modifier = modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = Spacing.m, vertical = Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            Text("外观", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+            Text("主题", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Box {
+                TextButton(onClick = { expanded = true }) {
+                    Text(themeMode.label)
+                    Icon(Icons.Default.ExpandMore, contentDescription = "选择主题")
+                }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                     ThemeMode.entries.forEach { mode ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 48.dp)
-                                .selectable(
-                                    selected = themeMode == mode,
-                                    role = Role.RadioButton,
-                                    onClick = { onThemeModeSelected(mode) }
-                                ),
-                            horizontalArrangement = Arrangement.Start,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(selected = themeMode == mode, onClick = null)
-                            Spacer(modifier = Modifier.width(Spacing.s))
-                            Text(
-                                text = mode.label,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = if (themeMode == mode) {
-                                    MaterialTheme.colorScheme.onSurface
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                }
-                            )
-                        }
+                        DropdownMenuItem(text = { Text(mode.label) }, onClick = {
+                            onThemeModeSelected(mode); expanded = false
+                        }, leadingIcon = { RadioButton(selected = themeMode == mode, onClick = null) },
+                            modifier = Modifier.semantics { role = Role.RadioButton; selected = themeMode == mode })
                     }
                 }
             }

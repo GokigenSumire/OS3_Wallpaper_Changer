@@ -21,6 +21,14 @@ class ScheduleStore(context: Context, val target: WallpaperTarget = WallpaperTar
     fun saveSettings(settings: ScheduleSettings) {
         synchronized(lock) { preferences.edit().putString(KEY_SETTINGS, json.encodeToString(settings)).apply() }
     }
+    /** Serializes a field-level edit against the latest settings, preserving unrelated controls. */
+    fun updateSettings(edit: (ScheduleSettings) -> ScheduleSettings) {
+        synchronized(lock) {
+            val current = loadSettings()
+            val next = edit(current)
+            if (next != current) saveSettings(next)
+        }
+    }
 
     fun loadState(): ScheduleState = read(KEY_STATE, ScheduleState.serializer()) ?: ScheduleState()
 

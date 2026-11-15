@@ -31,6 +31,7 @@ object LockEditorBridge {
     }
 
     interface Session : LiveEditBridge.EditSession {
+        val guidePracticeSession: String? get() = null
         /** Only exposed inside the app after authentication; never passed in an Intent. */
         val previewUri: Uri
         /** 固定本地诊断，不参与认证／业务授权；普通手动编辑默认无记录。 */
@@ -38,7 +39,8 @@ object LockEditorBridge {
     }
 
     internal const val EXTRA_TOKEN = "dev.abdus.apps.shimmer.p10.editor.TOKEN"
-    private class Record(val token: String, val owner: String?, val pending: Pending, val auth: LockEditAuthentication) {
+    private class Record(val token: String, val owner: String?, val pending: Pending, val auth: LockEditAuthentication,
+        val guidePracticeSession: String? = null) {
         val diagnostic = LockEditDiagnostics.currentRequest()
         var ready: Session? = null
         var capability: PendingIntent? = null
@@ -59,16 +61,16 @@ object LockEditorBridge {
     }
 
     /** There is deliberately no unspecified-ID / last-visible fallback in this bridge. */
-    fun launch(context: Context, engineId: String): Boolean {
+    fun launch(context: Context, engineId: String, practiceSession: String? = null): Boolean {
         discardExpired()
         if (record != null) return false
         val pending = targets[engineId]?.prepareLockEdit() ?: return false
-        return launchPrepared(context, pending, engineId)
+        return launchPrepared(context, pending, engineId, practiceSession)
     }
 
     /** CommandHost may already own the exact Pending captured under its admission ticket. */
-    fun launchPrepared(context: Context, pending: Pending, ownerEngineId: String? = null): Boolean {
-        val next = prepareRecord(pending, ownerEngineId) ?: return false
+    fun launchPrepared(context: Context, pending: Pending, ownerEngineId: String? = null, practiceSession: String? = null): Boolean {
+        val next = prepareRecord(pending, ownerEngineId, practiceSession ?: pendingGuideSession(context)) ?: return false
         return try {
             context.startActivity(entryIntent(context, next))
             true
@@ -84,7 +86,7 @@ object LockEditorBridge {
      * or replacement picture; this capability can only reach our non-exported auth entry.
      */
     fun createPreparedPendingIntent(context: Context, pending: Pending, ownerEngineId: String? = null): PendingIntent? {
-        val next = prepareRecord(pending, ownerEngineId) ?: return null
+        val next = prepareRecord(pending, ownerEngineId, pendingGuideSession(context)) ?: return null
         return try {
             val options = if (Build.VERSION.SDK_INT >= 35) ActivityOptions.makeBasic().apply {
                 setPendingIntentCreatorBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
@@ -107,7 +109,7 @@ object LockEditorBridge {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         .putExtra(EXTRA_TOKEN, next.token)
 
-    private fun prepareRecord(pending: Pending, ownerEngineId: String?): Record? {
+    private fun prepareRecord(pending: Pending, ownerEngineId: String?, practiceSession: String? = null): Record? {
         discardExpired()
         if (record != null || !pending.active) {
             pending.cancel()
@@ -119,13 +121,17 @@ object LockEditorBridge {
             pending.cancel()
             return null
         }
-        val next = Record(UUID.randomUUID().toString(), ownerEngineId, pending, auth)
+        val next = Record(UUID.randomUUID().toString(), ownerEngineId, pending, auth, practiceSession)
         record = next
         val timeout = Runnable { if (record === next) discard(next) }
         next.timeout = timeout
         handler.postDelayed(timeout, pending.deadlineElapsedRealtimeMillis - now)
         return next
     }
+    private fun pendingGuideSession(context: Context): String? =
+        dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeStore(context).current()?.takeIf {
+            !it.completed && it.target == "LOCK" && it.step == dev.abdus.apps.shimmer.ui.onboarding.GuideStep.GESTURE_EDIT
+        }?.id
 
     internal fun beginAuthentication(token: String?): Boolean {
         val current = matching(token) ?: return false
@@ -188,6 +194,7 @@ object LockEditorBridge {
         current.ready = null
         record = null
         return object : Session by session {
+            override val guidePracticeSession get() = current.guidePracticeSession
             override fun recordDiagnostic(cause: Int) { current.diagnostic?.record(cause) }
             override fun save(transform: dev.abdus.apps.shimmer.p3.ImageTransform?, saveUptimeMillis: Long) {
                 current.diagnostic?.record(LockEditDiagnosticCause.EDITOR_SAVE_REQUESTED)

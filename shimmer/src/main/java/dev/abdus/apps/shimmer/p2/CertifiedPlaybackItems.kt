@@ -10,7 +10,9 @@ import java.util.Collections
  * A coordinator may reuse it only after validating its complete catalog once for itself.
  */
 internal class CertifiedPlaybackItems(items: List<PlaybackItem>) : AbstractList<PlaybackItem>() {
-    private val frozen = Collections.unmodifiableList(ArrayList(items))
+    private val frozen = Collections.unmodifiableList(items.map {
+        it.copy(directoryTimes = Collections.unmodifiableList(ArrayList(it.directoryTimes)))
+    })
     override val size: Int get() = frozen.size
     override fun get(index: Int): PlaybackItem = frozen[index]
 }

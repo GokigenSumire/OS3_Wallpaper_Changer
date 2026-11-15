@@ -8,6 +8,7 @@ import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
+import androidx.room.Ignore
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
@@ -111,6 +112,8 @@ data class P1SourceEntity(
     val lastError: String? = null,
     /** Monotonic insertion position used to keep separately added sources grouped. */
     @ColumnInfo(defaultValue = "0") val sourceOrder: Long = 0,
+    @ColumnInfo(defaultValue = "1") val imagesEnabled: Boolean = true,
+    @ColumnInfo(defaultValue = "1") val videosEnabled: Boolean = true,
 )
 
 @Entity(
@@ -128,6 +131,8 @@ data class P1ImageRecordEntity(
     @ColumnInfo(defaultValue = "'COMMITTED'") val metadataState: String = "COMMITTED",
     val createdAt: String? = null,
     val updatedAt: String? = null,
+    @ColumnInfo(defaultValue = "'UNKNOWN'") val mediaType: String =
+        dev.abdus.apps.shimmer.p1.P1MediaTypes.classify(displayName, uri) ?: dev.abdus.apps.shimmer.p1.P1MediaTypes.UNKNOWN,
 )
 
 @Entity(
@@ -168,7 +173,7 @@ data class P1SourceDirectoryExclusionEntity(
 )
 
 /** Stable playback projection joining a committed image to an enabled P1 source. */
-data class P1PlaybackImage(
+data class P1PlaybackImage @Ignore constructor(
     val id: String,
     val uri: String,
     val displayName: String,
@@ -178,10 +183,27 @@ data class P1PlaybackImage(
     val sortOrder: Int,
     val sourceKind: String = "",
     val sourceRootUri: String = "",
-)
+    @Ignore val fileTimes: dev.abdus.apps.shimmer.p2.FileTimestamps,
+    @Ignore val directoryTimes: List<dev.abdus.apps.shimmer.p2.PlaybackDirectoryTime>,
+) {
+    constructor(id: String, uri: String, displayName: String, relativePath: String,
+                sourceId: String, sourceOrder: Long, sortOrder: Int,
+                sourceKind: String = "", sourceRootUri: String = "") :
+        this(id, uri, displayName, relativePath, sourceId, sourceOrder, sortOrder,
+            sourceKind, sourceRootUri, dev.abdus.apps.shimmer.p2.FileTimestamps(), emptyList())
+}
 
 @Dao
 interface P1SourceDao {
+    /** Metadata for the paged disabled list, including stopped sources; never authorises playback. */
+    @Query("""SELECT i.id AS id, i.uri AS uri, i.displayName AS displayName,
+        i.relativePath AS relativePath, s.id AS sourceId, s.sourceOrder AS sourceOrder,
+        l.sortOrder AS sortOrder, s.kind AS sourceKind, s.rootUri AS sourceRootUri
+        FROM image_records i JOIN source_image_links l ON l.imageId=i.id JOIN sources s ON s.id=l.sourceId
+        WHERE i.uri IN (:uris) ORDER BY s.sourceOrder, l.sortOrder, s.id, i.id""")
+    suspend fun getPlaybackLinksForUris(uris: List<String>): List<P1PlaybackImage>
+    @Query("SELECT * FROM source_file_times WHERE sourceId = :sourceId")
+    suspend fun getFileTimes(sourceId: String): List<P1FileTimeEntity>
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertSource(source: P1SourceEntity)
 
@@ -201,6 +223,13 @@ interface P1SourceDao {
 
     @Query("UPDATE sources SET enabled = :enabled, updatedAt = :updatedAt WHERE id = :sourceId")
     suspend fun setSourceEnabled(sourceId: String, enabled: Boolean, updatedAt: String?)
+
+    @Query("""UPDATE sources SET imagesEnabled = CASE WHEN :video = 0 THEN :enabled ELSE imagesEnabled END,
+        videosEnabled = CASE WHEN :video = 1 THEN :enabled ELSE videosEnabled END, updatedAt = :now WHERE id = :sourceId""")
+    suspend fun setSourceMediaEnabled(sourceId: String, video: Boolean, enabled: Boolean, now: String?): Int
+
+    @Query("UPDATE image_records SET mediaType = :mediaType WHERE id = :id AND uri = :uri AND mediaType = 'UNKNOWN'")
+    suspend fun classifyUnknownMedia(id: String, uri: String, mediaType: String): Int
 
     /**
      * Removes a source and its links. Foreign-key CASCADE deletes only the links;
@@ -233,7 +262,7 @@ interface P1SourceDao {
     @Query("""
         UPDATE image_records SET uri = :uri, displayName = :displayName, relativePath = :relativePath,
             sizeBytes = :sizeBytes, width = :width, height = :height, metadataState = :metadataState,
-            updatedAt = :updatedAt
+            updatedAt = :updatedAt, mediaType = COALESCE(:mediaType, mediaType)
         WHERE id = :imageId
     """)
     suspend fun updateImage(
@@ -246,6 +275,7 @@ interface P1SourceDao {
         height: Int?,
         metadataState: String,
         updatedAt: String?,
+        mediaType: String? = null,
     )
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
@@ -341,6 +371,7 @@ interface P1SourceDao {
         INNER JOIN source_image_links l ON l.imageId = i.id
         INNER JOIN sources s ON s.id = l.sourceId
         WHERE i.metadataState = 'COMMITTED' AND s.enabled = 1
+          ${dev.abdus.apps.shimmer.p1.P1MediaTypes.PLAYBACK_SQL}
           AND NOT EXISTS (
               SELECT 1 FROM source_directory_exclusions x
               WHERE x.sourceId = s.id
@@ -359,6 +390,7 @@ interface P1SourceDao {
         INNER JOIN source_image_links l ON l.imageId = i.id
         INNER JOIN sources s ON s.id = l.sourceId
         WHERE i.metadataState = 'COMMITTED' AND s.enabled = 1
+          ${dev.abdus.apps.shimmer.p1.P1MediaTypes.PLAYBACK_SQL}
           AND NOT EXISTS (
               SELECT 1 FROM source_directory_exclusions x
               WHERE x.sourceId = s.id
@@ -375,7 +407,9 @@ interface P1SourceDao {
             i.relativePath AS relativePath, l.sortOrder AS sortOrder
         FROM source_image_links l
         INNER JOIN image_records i ON i.id = l.imageId
+        INNER JOIN sources s ON s.id = l.sourceId
         WHERE l.sourceId = :sourceId AND i.metadataState = 'COMMITTED'
+          ${dev.abdus.apps.shimmer.p1.P1MediaTypes.PLAYBACK_SQL}
           AND NOT EXISTS (
               SELECT 1 FROM source_directory_exclusions x
               WHERE x.sourceId = l.sourceId
@@ -395,7 +429,9 @@ interface P1SourceDao {
             l.sortOrder AS sortOrder
         FROM source_image_links l
         INNER JOIN image_records i ON i.id = l.imageId
+        INNER JOIN sources s ON s.id = l.sourceId
         WHERE l.sourceId = :sourceId AND i.metadataState = 'COMMITTED'
+          ${dev.abdus.apps.shimmer.p1.P1MediaTypes.PLAYBACK_SQL}
           AND NOT EXISTS (
               SELECT 1 FROM source_directory_exclusions x
               WHERE x.sourceId = l.sourceId
@@ -415,7 +451,9 @@ interface P1SourceDao {
             l.sortOrder AS sortOrder
         FROM source_image_links l
         INNER JOIN image_records i ON i.id = l.imageId
+        INNER JOIN sources s ON s.id = l.sourceId
         WHERE l.sourceId = :sourceId AND i.metadataState = 'COMMITTED'
+          ${dev.abdus.apps.shimmer.p1.P1MediaTypes.PLAYBACK_SQL}
         ORDER BY l.sortOrder ASC, l.imageId ASC
     """)
     suspend fun getPlaybackSourcePackedLinkRowsWithoutExclusions(sourceId: String): List<P1PlaybackPackedSourceLinkRow>
@@ -439,7 +477,7 @@ interface P1SourceDao {
     suspend fun getEnabledPlaybackImages(): List<P1PlaybackImage> {
         val batches = ArrayList<P1PlaybackSourceLinks>()
         for (source in getEnabledPlaybackSources()) {
-            batches.add(P1PlaybackSourceLinks(source, readPlaybackSourceLinks(source.id)))
+            batches.add(P1PlaybackSourceLinks(source, readPlaybackSourceLinks(source.id), getFileTimes(source.id)))
         }
         return P1PlaybackProjection.resolveSourceLinks(batches)
     }
@@ -456,6 +494,7 @@ interface P1SourceDao {
         INNER JOIN source_image_links l ON l.imageId = i.id
         INNER JOIN sources s ON s.id = l.sourceId
         WHERE i.metadataState = 'COMMITTED' AND s.id IN (:sourceIds)
+          ${dev.abdus.apps.shimmer.p1.P1MediaTypes.PLAYBACK_SQL}
           AND NOT EXISTS (
               SELECT 1 FROM source_directory_exclusions x
               WHERE x.sourceId = s.id
@@ -473,6 +512,7 @@ interface P1SourceDao {
         INNER JOIN source_image_links l ON l.imageId = i.id
         INNER JOIN sources s ON s.id = l.sourceId
         WHERE i.metadataState = 'COMMITTED' AND s.id IN (:sourceIds)
+          ${dev.abdus.apps.shimmer.p1.P1MediaTypes.PLAYBACK_SQL}
           AND NOT EXISTS (
               SELECT 1 FROM source_directory_exclusions x
               WHERE x.sourceId = s.id
@@ -489,7 +529,7 @@ interface P1SourceDao {
         val selected = sourceIds.toHashSet()
         val batches = ArrayList<P1PlaybackSourceLinks>()
         for (source in getSources()) {
-            if (source.id in selected) batches.add(P1PlaybackSourceLinks(source, readPlaybackSourceLinks(source.id)))
+            if (source.id in selected) batches.add(P1PlaybackSourceLinks(source, readPlaybackSourceLinks(source.id), getFileTimes(source.id)))
         }
         return P1PlaybackProjection.resolveSourceLinks(batches)
     }
@@ -597,7 +637,7 @@ interface P1SourceDao {
             insertImages(listOf(canonical))
             updateImage(canonical.id, canonical.uri, canonical.displayName, canonical.relativePath,
                 canonical.sizeBytes ?: existing?.sizeBytes, canonical.width ?: existing?.width,
-                canonical.height ?: existing?.height, canonical.metadataState, now)
+                canonical.height ?: existing?.height, canonical.metadataState, now, canonical.mediaType)
             if (canonical.id !in links) {
                 val link = P1SourceImageLinkEntity(sourceId, canonical.id, nextOrder++)
                 insertLinks(listOf(link))
@@ -758,14 +798,16 @@ interface ImageDao {
         P1SourceImageLinkEntity::class,
         P1SourceDirectoryExclusionEntity::class,
         P1CatalogRevisionEntity::class,
+        P1FileTimeEntity::class,
     ],
-    version = 8,
+    version = 10,
     exportSchema = true,
 )
 @TypeConverters(UriConverters::class)
 abstract class ShimmerDatabase : RoomDatabase() {
     abstract fun imageDao(): ImageDao
     abstract fun p1SourceDao(): P1SourceDao
+    abstract fun p1FileTimeDao(): P1FileTimeDao
 
     companion object {
         @Volatile
@@ -792,7 +834,7 @@ abstract class ShimmerDatabase : RoomDatabase() {
 
         private fun buildDatabase(context: Context, target: WallpaperTarget): ShimmerDatabase =
             Room.databaseBuilder(context.applicationContext, ShimmerDatabase::class.java, nameFor(target))
-                .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .addMigrations(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .addCallback(P1CatalogRevision.callback)
                 .build()
 
@@ -980,5 +1022,32 @@ abstract class ShimmerDatabase : RoomDatabase() {
                 P1CatalogRevision.install(database)
             }
         }
+
+        val MIGRATION_8_9: Migration = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("CREATE TABLE IF NOT EXISTS source_file_times (" +
+                    "sourceId TEXT NOT NULL, nodeKey TEXT NOT NULL, createdMillis INTEGER, modifiedMillis INTEGER, " +
+                    "PRIMARY KEY(sourceId, nodeKey), FOREIGN KEY(sourceId) REFERENCES sources(id) ON UPDATE NO ACTION ON DELETE CASCADE)")
+                database.execSQL("CREATE INDEX IF NOT EXISTS index_source_file_times_sourceId ON source_file_times(sourceId)")
+                P1CatalogRevision.install(database)
+            }
+        }
+        val MIGRATION_9_10: Migration = object : Migration(9, 10) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("ALTER TABLE sources ADD COLUMN imagesEnabled INTEGER NOT NULL DEFAULT 1")
+                database.execSQL("ALTER TABLE sources ADD COLUMN videosEnabled INTEGER NOT NULL DEFAULT 1")
+                database.execSQL("ALTER TABLE image_records ADD COLUMN mediaType TEXT NOT NULL DEFAULT 'UNKNOWN'")
+                // 只推断已知扩展名；无扩展名记录之后由来源设置按MIME补全，不猜测成图片。
+                database.query("SELECT id, displayName, uri FROM image_records").use { rows ->
+                    while (rows.moveToNext()) {
+                        val type = dev.abdus.apps.shimmer.p1.P1MediaTypes.classify(rows.getString(1), rows.getString(2))
+                        if (type != null) database.execSQL("UPDATE image_records SET mediaType = ? WHERE id = ?",
+                            arrayOf(type, rows.getString(0)))
+                    }
+                }
+                P1CatalogRevision.install(database)
+            }
+        }
+
     }
 }

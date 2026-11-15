@@ -28,7 +28,7 @@ class ImageRenderer(
     val presentationReady: Boolean get() = video?.presentationReady ?: true
     val mediaState: dev.abdus.apps.shimmer.media.MediaFrameState? get() =
         if (clip == null) null else if (videoFailed) dev.abdus.apps.shimmer.media.MediaFrameState.FALLBACK_ERROR
-        else video?.let { if (it.showVideo) dev.abdus.apps.shimmer.media.MediaFrameState.VIDEO else it.state }
+        else video?.displayState
     val videoTextureCount: Int get() = if (video == null) 0 else 6
 
     val aspectRatio: Float get() = textures.aspectRatio

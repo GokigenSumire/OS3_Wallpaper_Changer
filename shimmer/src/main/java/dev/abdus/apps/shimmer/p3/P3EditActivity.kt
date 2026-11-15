@@ -93,6 +93,7 @@ open class P3EditActivity : ComponentActivity() {
         "没有可编辑的壁纸：请先把 P2 设为动态壁纸，并等桌面显示出图片后再试。"
     protected open fun acquireEditorSession(): LiveEditBridge.EditSession? =
         LiveEditBridge.find(intent.getStringExtra(EXTRA_TARGET), editorTarget)?.beginEdit()
+    protected open fun guidePracticeSession(): String? = intent.getStringExtra(dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeStore.EXTRA_SESSION)
 
     /** LOCK overrides this to put a privately owned GL surface below the shared gesture UI. */
     protected open fun attachEditorPreview(root: FrameLayout) = Unit
@@ -111,9 +112,10 @@ open class P3EditActivity : ComponentActivity() {
         private const val LOG_SOURCE = "P3_EDIT"
 
         /** [gestureUptime] is set only by the wallpaper gesture; it starts the entry-latency clock. */
-        fun launch(context: Context, targetId: String?, gestureUptime: Long?) {
+        fun launch(context: Context, targetId: String?, gestureUptime: Long?, practiceSession: String? = null) {
             val intent = Intent(context, P3EditActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            practiceSession?.let { intent.putExtra(dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeStore.EXTRA_SESSION, it) }
             targetId?.let { intent.putExtra(EXTRA_TARGET, it) }
             gestureUptime?.let { intent.putExtra(EXTRA_GESTURE_UPTIME, it) }
             context.startActivity(intent)
@@ -135,6 +137,7 @@ open class P3EditActivity : ComponentActivity() {
         image = opened.image
         draft = image.original
         buildScreen()
+        dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeStore(this).editorOpened(guidePracticeSession(), editorTarget, image.imageId)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() = confirmLeave(offerSave = true)
         })
@@ -246,7 +249,7 @@ open class P3EditActivity : ComponentActivity() {
         finish()
     }
 
-    /** Saving and discarding are reached only through Back; an unchanged draft exits directly. */
+    /** Explicit Back follows the shared leave policy; lifecycle interruption still cancels. */
     private fun confirmLeave(offerSave: Boolean) {
         if (closing || confirmationShowing) return
         resetNavigationGesture()
@@ -257,6 +260,13 @@ open class P3EditActivity : ComponentActivity() {
         if (!resetPending && draft == image.original) {
             cancelEdit()
             return
+        }
+        if (offerSave) {
+            when (editorPreferences.switchSavePolicy().decide(hasChanges = true)) {
+                EditorSwitchDecision.SAVE_AND_SWITCH -> { save(); return }
+                EditorSwitchDecision.SWITCH_WITHOUT_SAVE -> { cancelEdit(); return }
+                EditorSwitchDecision.ASK -> Unit
+            }
         }
         val dialog = AlertDialog.Builder(this)
         if (offerSave) {
@@ -592,7 +602,7 @@ open class P3EditActivity : ComponentActivity() {
         if (stepping || closing || confirmationShowing) return
         val choices = EditorSwitchSavePolicy.entries
         showConfirmation(AlertDialog.Builder(this)
-            .setTitle("切换壁纸时的修改")
+            .setTitle("切换或退出时的修改")
             .setSingleChoiceItems(choices.map { it.label }.toTypedArray(), choices.indexOf(editorPreferences.switchSavePolicy())) { dialog, index ->
                 editorPreferences.setSwitchSavePolicy(choices[index])
                 refreshSwitchPolicyLabel()

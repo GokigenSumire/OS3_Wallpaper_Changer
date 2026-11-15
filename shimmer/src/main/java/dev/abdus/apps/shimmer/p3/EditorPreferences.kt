@@ -3,7 +3,7 @@ package dev.abdus.apps.shimmer.p3
 import android.content.Context
 import androidx.core.content.edit
 
-/** 只决定主动切换图片前如何处理草稿；不改变返回、锁屏或进程中断的处理。 */
+/** 决定主动切换图片或返回退出时如何处理草稿；锁屏或后台中断仍取消草稿。 */
 internal enum class EditorSwitchSavePolicy(val storedValue: String, val label: String) {
     SAVE("save", "默认保存"), DISCARD("discard", "默认不保存"), ASK("ask", "每次询问");
 

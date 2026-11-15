@@ -16,10 +16,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.Alignment
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import dev.abdus.apps.shimmer.p10.WallpaperTarget
-import dev.abdus.apps.shimmer.p4.SchedulePageTarget
 import dev.abdus.apps.shimmer.ui.effects.EffectsViewModel
 import dev.abdus.apps.shimmer.ui.effects.components.IntervalSettingsDialog
 import dev.abdus.apps.shimmer.ui.navigation.RefreshOnResume
@@ -41,9 +41,17 @@ fun PlaybackSettingsPage(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var showIntervalDialog by remember { mutableStateOf(false) }
+    var showScheduleRules by rememberSaveable(wallpaperTarget) { mutableStateOf(false) }
     RefreshOnResume { viewModel.refresh() }
     LaunchedEffect(uiState.message) {
         uiState.message?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show(); viewModel.messageShown() }
+    }
+    if (showScheduleRules) {
+        dev.abdus.apps.shimmer.ui.playback.schedule.ScheduleRulesPage(wallpaperTarget, onBack = {
+            showScheduleRules = false
+            viewModel.refresh()
+        })
+        return
     }
     if (uiState.isLoading) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -55,13 +63,17 @@ fun PlaybackSettingsPage(
             intervalEnabled = uiState.intervalEnabled,
             onIntervalToggle = { viewModel.toggleInterval(it) },
             intervalLabel = uiState.intervalLabel,
+            paused = uiState.schedulePaused,
+            onPauseToggle = { viewModel.toggleSchedulePause(it) },
+            clockLabel = if (uiState.intervalClock == dev.abdus.apps.shimmer.p4.IntervalClock.VISIBLE) "可见累计" else "自然时间",
+            rulesLabel = uiState.scheduleRulesLabel,
             unlockEnabled = uiState.unlockEnabled,
             onUnlockToggle = { viewModel.toggleUnlock(it) },
             lockEnabled = uiState.lockEnabled,
             onLockToggle = { viewModel.toggleLock(it) },
             screenOffEnabled = uiState.screenOffEnabled,
             onScreenOffToggle = { viewModel.toggleScreenOff(it) },
-            onDateRulesClick = { context.startActivity(SchedulePageTarget.createIntent(context, wallpaperTarget)) },
+            onDateRulesClick = { showScheduleRules = true },
             onMoreScheduleClick = { showIntervalDialog = true },
         )
         MediaSettingsCard()

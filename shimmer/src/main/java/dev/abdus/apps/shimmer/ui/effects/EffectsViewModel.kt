@@ -64,6 +64,8 @@ class EffectsViewModel @JvmOverloads constructor(
                 inheritPreviousEnabled = p3Defaults.inheritPrevious,
                 selectedTransition = transitionEffect,
                 transitionDuration = transitionDuration,
+                schedulePaused = scheduleSettings.pauseAll,
+                scheduleRulesLabel = "已开启 ${scheduleSettings.dailyTimes.count { it.enabled }} 个定时 · ${scheduleSettings.rules.count { it.enabled }} 条规则",
                 intervalEnabled = scheduleSettings.interval.enabled,
                 intervalLabel = ScheduleSummary.intervalLabel(scheduleSettings.interval),
                 unlockEnabled = scheduleSettings.onUnlock,
@@ -75,6 +77,14 @@ class EffectsViewModel @JvmOverloads constructor(
                 intervalClock = scheduleSettings.interval.clock,
                 isLoading = false
             )
+        }
+    }
+
+    fun toggleSchedulePause(paused: Boolean) {
+        viewModelScope.launch {
+            val settings = scheduleStore.loadSettings()
+            scheduleStore.saveSettings(settings.copy(pauseAll = paused))
+            _uiState.value = _uiState.value.copy(schedulePaused = paused)
         }
     }
 
@@ -206,6 +216,7 @@ class EffectsViewModel @JvmOverloads constructor(
                 intervalValue = value,
                 intervalUnit = unit,
                 intervalClock = clock,
+                message = if (!updated.enabled) "间隔已保存，开启“间隔切换”后生效" else if (settings.pauseAll) "间隔已保存，恢复自动切换后生效" else "切换间隔已更新",
             )
         }
     }
@@ -233,6 +244,8 @@ data class EffectsUiState(
     val intervalClock: IntervalClock = IntervalClock.VISIBLE,
     val message: String? = null,
     // P9-SETTINGS-02：调度从设置页移入本页
+    val schedulePaused: Boolean = false,
+    val scheduleRulesLabel: String = "",
     val intervalEnabled: Boolean = false,
     val intervalLabel: String = "",
     val unlockEnabled: Boolean = false,

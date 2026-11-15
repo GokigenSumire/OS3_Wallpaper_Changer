@@ -425,7 +425,7 @@ class P1PlaybackCursorRoomTest {
             assertSame(group.first().sourceKind, item.sourceKind)
             assertSame(group.first().sourceRootUri, item.sourceRootUri)
         }
-        assertEquals(8, database.openHelper.readableDatabase.version)
+        assertEquals(10, database.openHelper.readableDatabase.version)
     }
 
     @Test

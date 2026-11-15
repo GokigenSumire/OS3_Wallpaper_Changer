@@ -71,8 +71,8 @@ class TargetDatabaseIsolationTest {
         assertSame(home, ShimmerDatabase.getInstance(context, WallpaperTarget.HOME))
         assertSame(lock, ShimmerDatabase.getInstance(context, WallpaperTarget.LOCK))
         assertNotSame(home, lock)
-        assertEquals(8, home.openHelper.writableDatabase.version)
-        assertEquals(8, lock.openHelper.writableDatabase.version)
+        assertEquals(10, home.openHelper.writableDatabase.version)
+        assertEquals(10, lock.openHelper.writableDatabase.version)
         assertNotEquals(home.openHelper.writableDatabase.path, lock.openHelper.writableDatabase.path)
     }
 

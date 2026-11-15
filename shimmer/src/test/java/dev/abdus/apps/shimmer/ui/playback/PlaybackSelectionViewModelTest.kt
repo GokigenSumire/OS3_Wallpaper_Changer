@@ -98,7 +98,7 @@ class PlaybackSelectionViewModelTest {
             assertNull(vm.uiState.value.scrollRequest)
             assertTrue(vm.uiState.value.message!!.contains("返回桌面"))
         }
-        assertEquals(4, submitted.size)
+        assertEquals(12, submitted.size)
     }
 
     @Test fun manualSecondarySelectionNeverSubmitsPlayback() {

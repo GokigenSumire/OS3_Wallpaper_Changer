@@ -42,6 +42,7 @@ fun SourceCard(
     source: SourceItem,
     modifier: Modifier = Modifier,
     onToggleEnabled: () -> Unit = {},
+    onSetMediaEnabled: (video: Boolean, enabled: Boolean) -> Unit = { _, _ -> },
     /** P9-GALLERY-04：重新扫描该来源，取代原先跳转旧 P1 页的"编辑"。 */
     onRescan: () -> Unit = {},
     /** P9-PREVIEW-EDIT-01：点预览图更换预览图；只改预览存储，不改来源与图片。 */
@@ -125,7 +126,7 @@ fun SourceCard(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "${source.kindLabel} · ${source.imageCount} 张图片",
+                            text = "${source.kindLabel}    ${source.imageCount} 项内容",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -144,15 +145,34 @@ fun SourceCard(
                 )
             }
 
+            if (source.type == SourceType.FOLDER || source.type == SourceType.MULTI_IMAGES) {
+                Spacer(Modifier.height(Spacing.s))
+                HorizontalDivider()
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SourceMediaSwitch("图片", source.imageMediaCount, source.imagesEnabled, !busy,
+                        Modifier.weight(1f)) { onSetMediaEnabled(false, it) }
+                    SourceMediaSwitch("视频", source.videoMediaCount, source.videosEnabled, !busy,
+                        Modifier.weight(1f)) { onSetMediaEnabled(true, it) }
+                }
+                Text(when {
+                    !source.isEnabled -> "来源已停用；类型选择会保留"
+                    !source.imagesEnabled && !source.videosEnabled -> "两类均已停用，当前画面与内容保留"
+                    else -> "动态照片归图片；分类调整从下次换图生效"
+                }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (source.unknownMediaCount > 0) Text("${source.unknownMediaCount} 项类型待确认，可重新扫描",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
             // 子目录：来源文件夹本身是最外层，默认折叠；规则与 P1 来源页相同
             if (source.type == SourceType.FOLDER && source.directoryRows.rows.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(Spacing.s))
                 Text(
-                    text = "${source.subdirectoryCount} 个子目录 · 停用上级会同时停用下级",
+                    text = "${source.subdirectoryCount} 个子目录（随上级启停）",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 source.directoryRows.rows.forEach { row ->
+                    Spacer(Modifier.height(6.dp))
                     DirectoryRowItem(
                         row = row,
                         onToggle = { onToggleDirectory(row.path) },
@@ -308,48 +328,28 @@ private fun DirectoryRowItem(
     onToggle: () -> Unit,
     onSetEnabled: (Boolean) -> Unit,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+    dev.abdus.apps.shimmer.ui.components.FolderLevelHeader(
+        name = row.name, count = row.totalCount, depth = row.depth,
+        expanded = row.expanded, expandable = row.hasChildren, nested = true,
+        state = row.stateLabel, onToggle = onToggle,
     ) {
-        val arrow = when {
-            !row.hasChildren -> "　"
-            row.expanded -> "▼"
-            else -> "▶"
-        }
-        val rowModifier = Modifier
-            .weight(1f)
-            .heightIn(min = 48.dp)
-            .let { base ->
-                if (row.hasChildren) {
-                    base
-                        .clickable(
-                            role = Role.Button,
-                            onClickLabel = if (row.expanded) "折叠" else "展开",
-                            onClick = onToggle
-                        )
-                        .semantics { stateDescription = if (row.expanded) "已展开" else "已折叠" }
-                } else base
-            }
-            .padding(start = DirectoryIndentStep * row.depth.coerceAtMost(MaxIndentDepth))
-        Box(modifier = rowModifier, contentAlignment = Alignment.CenterStart) {
-            Text(
-                text = "$arrow ${row.name}/ · 共 ${row.totalCount} 张 · ${row.stateLabel}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (row.stopped || row.control == DirectoryControl.PARENT) {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                }
-            )
-        }
         when (row.control) {
-            DirectoryControl.SOURCE_SWITCH -> DirectoryControlNote("由来源开关控制")
-            DirectoryControl.PARENT -> DirectoryControlNote("由上级控制")
+            DirectoryControl.SOURCE_SWITCH -> DirectoryControlNote("来源控制")
+            DirectoryControl.PARENT -> DirectoryControlNote("上级控制")
             DirectoryControl.TOGGLE -> TextButton(onClick = { onSetEnabled(row.stopped) }) {
                 Text(if (row.stopped) "启用" else "停用")
             }
         }
+    }
+}
+
+@Composable
+private fun SourceMediaSwitch(label: String, count: Int, checked: Boolean, enabled: Boolean,
+                              modifier: Modifier, onChanged: (Boolean) -> Unit) {
+    Column(modifier.padding(vertical = 8.dp)) {
+        Text("$label $count", style = MaterialTheme.typography.labelLarge)
+        Switch(checked = checked, enabled = enabled, onCheckedChange = onChanged,
+            modifier = Modifier.semantics { contentDescription = "${label}类型启用开关" })
     }
 }
 

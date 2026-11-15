@@ -218,7 +218,9 @@ class P1PlaybackSourceRoomTest {
         assertEquals(5, reads.size)
         assertTrue(reads.all { it.inTransaction })
         assertEquals(setOf("a", "b"), reads.filter { it.args.size == 1 }.map { it.args.single() }.toSet())
-        assertTrue(reads.filter { it.sql.startsWith("SELECT CAST(printf(") }.all { !it.sql.contains("INNER JOIN sources") &&
+        assertTrue(reads.filter { it.sql.startsWith("SELECT CAST(printf(") }.all { it.sql.contains("INNER JOIN sources s ON s.id = l.sourceId") &&
+            it.sql.contains("s.imagesEnabled = 1") && it.sql.contains("s.videosEnabled = 1") &&
+            it.sql.contains("i.mediaType") &&
             !it.sql.contains("AS sourceId") && it.sql.contains("ORDER BY l.sortOrder ASC, l.imageId ASC") })
         reads.clear()
         dao.getRulePlaybackImages(listOf("stopped", "b", "b"))
@@ -262,7 +264,7 @@ class P1PlaybackSourceRoomTest {
                 assertSame(group.first().sourceRootUri, item.sourceRootUri)
             }
         }
-        assertEquals(8, database.openHelper.readableDatabase.version)
+        assertEquals(10, database.openHelper.readableDatabase.version)
     }
 
     @Test

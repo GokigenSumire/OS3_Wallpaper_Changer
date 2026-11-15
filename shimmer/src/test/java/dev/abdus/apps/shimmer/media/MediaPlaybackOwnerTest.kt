@@ -35,18 +35,115 @@ class MediaPlaybackOwnerTest {
     private val textures = mutableListOf<SurfaceTexture>()
     private val players = mutableListOf<Fake>()
     private var renders = 0
-    private fun owner() = MediaPlaybackOwner(context, { renders++ }) { _, _ -> Fake().also(players::add).proxy }
+    private var soundService: org.robolectric.android.controller.ServiceController<MediaSoundService>? = null
+    private fun owner(audio: Boolean = false, visible: Boolean = true, target: dev.abdus.apps.shimmer.p10.WallpaperTarget = dev.abdus.apps.shimmer.p10.WallpaperTarget.HOME) = MediaPlaybackOwner(context, { renders++ }, audio, target) { _, _ -> Fake().also(players::add).proxy }
+        .also {
+            if (audio && soundService == null) {
+                soundService = org.robolectric.Robolectric.buildService(MediaSoundService::class.java).create().startCommand(0, 1)
+            }
+            if (visible) it.setAllowed(true)
+        }
     private fun open(owner: MediaPlaybackOwner, motion: Boolean = false, hdr: Boolean = false): MediaPlaybackOwner.Session {
         val surface = Surface(SurfaceTexture(0).also(textures::add)).also(surfaces::add)
         return owner.open(MediaClip("content://tests/original", if (motion) MediaKind.MOTION_PHOTO else MediaKind.VIDEO, hdr = hdr), surface).also(sessions::add)
     }
     @Before fun resetMode() {
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, false)
+        MediaPreferences.setSoundEnabled(context, MediaKind.MOTION_PHOTO, false)
         MediaPreferences.setMotionMode(context, MotionMode.LOOP)
         MediaPreferences.setRestartOnLock(context, false)
         MediaPreferences.setRestartOnUnlock(context, false)
     }
+    @Test fun perItemMuteAppliesImmediatelyWithoutRestartAndCannotOverrideGlobalMute() {
+        val target = dev.abdus.apps.shimmer.p10.WallpaperTarget.HOME
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, true)
+        val session = open(owner(audio = true)); val p = players.single()
+        p.firstFrame(); session.frameConsumed(); p.position = 900
+        MediaPreferences.setItemSoundEnabled(context, "content://tests/original", target, false)
+        assertTrue(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        assertEquals(0f, p.volume, 0f)
+        MediaPreferences.setItemSoundEnabled(context, "content://tests/original", target, true)
+        assertFalse(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        assertEquals(1, players.size)
+        assertEquals(900L, p.position)
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, false)
+        MediaPreferences.setItemSoundEnabled(context, "content://tests/original", target, true)
+        assertTrue(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+    }
+    @Test fun itemMuteIsScopedToExactUriAndWallpaperTarget() {
+        val home = dev.abdus.apps.shimmer.p10.WallpaperTarget.HOME
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, true)
+        MediaPreferences.setItemSoundEnabled(context, "content://tests/original", home, false)
+        val session = open(owner(audio = true, target = dev.abdus.apps.shimmer.p10.WallpaperTarget.LOCK))
+        val p = players.single(); p.firstFrame(); session.frameConsumed()
+        assertFalse(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        MediaPreferences.setItemSoundEnabled(context, "content://tests/other", dev.abdus.apps.shimmer.p10.WallpaperTarget.LOCK, false)
+        assertFalse(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+    }
+    @Test fun soundSwitchEnablesConsumedVisibleVideoAndMutesWithoutRestartingIt() {
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, true)
+        val session = open(owner(audio = true)); val p = players.single()
+        assertTrue(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        p.firstFrame(); session.frameConsumed()
+        assertFalse(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, false)
+        assertTrue(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        assertEquals(0f, p.volume, 0f)
+        assertEquals(1, players.size)
+        assertEquals(MediaFrameState.VIDEO, session.state)
+    }
+    @Test fun silentVideoNeverClaimsAudioFocus() {
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, true)
+        val session = open(owner(audio = true)); val p = players.single()
+        p.firstFrame(audio = false); session.frameConsumed()
+        assertEquals(MediaFrameState.VIDEO, session.state)
+        assertTrue(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        assertEquals(0f, p.volume, 0f)
+        val manager = context.getSystemService(android.media.AudioManager::class.java)
+        assertNull(shadowOf(manager).lastAudioFocusRequest)
+    }
+    @Test fun creationBeforeFirstVisibilityCannotEmitSound() {
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, true)
+        val owner = owner(audio = true, visible = false)
+        val session = open(owner); val p = players.single()
+        p.firstFrame(); session.frameConsumed()
+        assertTrue(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        owner.setAllowed(true)
+        assertFalse(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+    }
+    @Test fun previewStaysMutedWithBothSoundSwitchesOn() {
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, true)
+        MediaPreferences.setSoundEnabled(context, MediaKind.MOTION_PHOTO, true)
+        val session = open(owner()); players.single().firstFrame(); session.frameConsumed()
+        assertTrue(players.single().parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        assertEquals(0f, players.single().volume, 0f)
+    }
+    @Test fun onlyLatestConsumedWallpaperCanHaveAudioAndHideReleasesIt() {
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, true)
+        val home = owner(audio = true); val a = open(home)
+        players[0].firstFrame(); a.frameConsumed()
+        val lock = owner(audio = true); val b = open(lock)
+        players[1].firstFrame(); b.frameConsumed()
+        assertTrue(players[0].parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        assertFalse(players[1].parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        lock.setAllowed(false); home.setAllowed(false)
+        assertTrue(players.all { it.released && it.volume == 0f })
+    }
+    @Test fun motionSoundIsIndependentAndStillModeReleasesItsPlayer() {
+        MediaPreferences.setSoundEnabled(context, MediaKind.VIDEO, true)
+        val session = open(owner(audio = true), motion = true)
+        val p = players.single(); p.firstFrame(); session.frameConsumed()
+        assertTrue(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        MediaPreferences.setSoundEnabled(context, MediaKind.MOTION_PHOTO, true)
+        assertFalse(p.parameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_AUDIO))
+        MediaPreferences.setMotionMode(context, MotionMode.STILL)
+        assertTrue(p.released)
+        assertEquals(0f, p.volume, 0f)
+        assertEquals(MediaFrameState.STILL, session.state)
+    }
     @After fun close() {
         sessions.forEach { it.close() }
+        soundService?.destroy()
         shadowOf(Looper.getMainLooper()).idle()
         surfaces.forEach { it.release() }
         textures.forEach { it.release() }
@@ -78,6 +175,34 @@ class MediaPlaybackOwnerTest {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(MediaPlaybackOwner.START_TIMEOUT_MS + 1))
         assertEquals(MediaFrameState.VIDEO, session.state)
         assertFalse(players.single().released)
+    }
+    @Test fun consumedFrameIsRetainedAcrossVisibilityUntilANewGenerationIsConsumed() {
+        val owner = owner(); val session = open(owner)
+        players.single().firstFrame(); session.frameConsumed()
+        val oldGeneration = session.outputGeneration
+        owner.setAllowed(false)
+        assertTrue(session.resumeFrameHeld)
+        owner.setAllowed(true)
+        assertEquals(MediaFrameState.PREPARING, session.state)
+        assertTrue(session.resumeFrameHeld)
+        session.frameConsumed(oldGeneration)
+        assertTrue(session.resumeFrameHeld)
+        players.last().firstFrame()
+        session.frameConsumed()
+        assertFalse(session.resumeFrameHeld)
+        assertEquals(MediaFrameState.VIDEO, session.state)
+    }
+    @Test fun unconsumedFirstFrameCannotBeRetainedAndExplicitRestartClearsRetention() {
+        val owner = owner(); val session = open(owner)
+        players.single().firstFrame()
+        owner.setAllowed(false)
+        assertFalse(session.resumeFrameHeld)
+        owner.setAllowed(true)
+        players.last().firstFrame(); session.frameConsumed()
+        owner.setAllowed(false)
+        assertTrue(session.resumeFrameHeld)
+        session.restartFromBeginning()
+        assertFalse(session.resumeFrameHeld)
     }
     @Test fun invisibleReleasesAndResumeGetsNewPlayerAtSavedPosition() {
         val owner = owner(); val session = open(owner)
@@ -281,12 +406,14 @@ class MediaPlaybackOwnerTest {
         var released = false
         var position = 0L
         var seek = -1L
+        var volume = 0f
         val proxy = Proxy.newProxyInstance(Player::class.java.classLoader, arrayOf(Player::class.java)) { _, method, args ->
             when (method.name) {
                 "addListener" -> { listeners += args!![0] as Player.Listener; null }
                 "getTrackSelectionParameters" -> parameters
                 "setTrackSelectionParameters" -> { parameters = args!![0] as TrackSelectionParameters; null }
                 "setRepeatMode" -> { repeat = args!![0] as Int; null }
+                "setVolume" -> { volume = args!![0] as Float; null }
                 "getCurrentPosition" -> position
                 "seekTo" -> { seek = args!!.last() as Long; null }
                 "release" -> { released = true; null }
@@ -294,7 +421,15 @@ class MediaPlaybackOwnerTest {
             }
         } as Player
         fun ended() { listeners.toList().forEach { it.onPlaybackStateChanged(Player.STATE_ENDED) } }
-        fun firstFrame() { listeners.toList().forEach { it.onRenderedFirstFrame() } }
+        fun firstFrame(audio: Boolean = true) {
+            if (audio) {
+                val format = androidx.media3.common.Format.Builder().setSampleMimeType("audio/mp4a-latm").build()
+                val group = androidx.media3.common.Tracks.Group(androidx.media3.common.TrackGroup(format), false,
+                    intArrayOf(androidx.media3.common.C.FORMAT_HANDLED), booleanArrayOf(false))
+                listeners.toList().forEach { it.onTracksChanged(androidx.media3.common.Tracks(listOf(group))) }
+            }
+            listeners.toList().forEach { it.onRenderedFirstFrame() }
+        }
         fun fail() { listeners.toList().forEach { it.onPlayerError(PlaybackException("test", null, PlaybackException.ERROR_CODE_DECODER_INIT_FAILED)) } }
     }
 }

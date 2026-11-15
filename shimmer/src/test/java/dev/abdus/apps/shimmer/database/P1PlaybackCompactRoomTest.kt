@@ -208,7 +208,7 @@ class P1PlaybackCompactRoomTest {
             assertSame(images.first().sourceKind, image.sourceKind)
             assertSame(images.first().sourceRootUri, image.sourceRootUri)
         }
-        assertEquals(8, database.openHelper.readableDatabase.version)
+        assertEquals(10, database.openHelper.readableDatabase.version)
     }
 
     private suspend fun assertEquivalent() {

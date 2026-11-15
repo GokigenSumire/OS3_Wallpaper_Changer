@@ -278,7 +278,7 @@ class P1PlaybackPackedRoomTest {
         assertEquals(11890, dao.getEnabledPlaybackImages().size)
         assertEquivalent()
         assertRuleEquivalent(listOf("source-3", "source-1"))
-        assertEquals(8, database.openHelper.readableDatabase.version)
+        assertEquals(10, database.openHelper.readableDatabase.version)
     }
 
     @Test

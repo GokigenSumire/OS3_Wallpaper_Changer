@@ -30,8 +30,8 @@ class WallpaperTargetUiTest {
     }
 
     @Test fun targetLabelsAreExplicitAndLockCannotReachLegacyHomeEditor() {
-        assertEquals("桌面 HOME", WallpaperTargetUi.label(WallpaperTarget.HOME))
-        assertEquals("锁屏 LOCK", WallpaperTargetUi.label(WallpaperTarget.LOCK))
+        assertEquals("桌面", WallpaperTargetUi.label(WallpaperTarget.HOME))
+        assertEquals("锁屏", WallpaperTargetUi.label(WallpaperTarget.LOCK))
         assertTrue(WallpaperTargetUi.canOpenLegacyEditor(WallpaperTarget.HOME))
         assertFalse(WallpaperTargetUi.canOpenLegacyEditor(WallpaperTarget.LOCK))
     }

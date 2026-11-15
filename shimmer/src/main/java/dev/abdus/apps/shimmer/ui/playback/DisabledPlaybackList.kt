@@ -8,6 +8,7 @@ import dev.abdus.apps.shimmer.p3.DisabledImageList
 data class DisabledPlaybackPage(
     val disabledIds: Set<String> = emptySet(),
     val entries: List<DisabledImageEntry> = emptyList(),
+    val model: QueueModel = QueueModel.EMPTY,
 ) {
     val totalCount: Int get() = disabledIds.size
     val remainingCount: Int get() = (totalCount - entries.size).coerceAtLeast(0)

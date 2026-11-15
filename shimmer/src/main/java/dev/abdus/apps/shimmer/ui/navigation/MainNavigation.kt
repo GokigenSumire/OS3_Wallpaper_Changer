@@ -58,6 +58,18 @@ import dev.abdus.apps.shimmer.ui.settings.SettingsScreen
 import dev.abdus.apps.shimmer.ui.theme.Spacing
 import dev.abdus.apps.shimmer.p10.WallpaperTarget
 import androidx.compose.runtime.key
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.tween
+import dev.abdus.apps.shimmer.ui.onboarding.LocalGuideController
+import dev.abdus.apps.shimmer.ui.onboarding.GuideAnchor
+import dev.abdus.apps.shimmer.ui.onboarding.guideAnchor
 
 /**
  * 主导航框架：模糊壁纸背景 + 半透明底栏 + 内容区域（P8.7）。
@@ -68,9 +80,36 @@ fun MainNavigation(
     modifier: Modifier = Modifier,
 ) {
     // 按路由保存，旋转屏幕或系统回收后仍停在原 Tab
-    var selectedRoute by rememberSaveable { mutableStateOf(NavigationDestination.Gallery.route) }
+    val entry = dev.abdus.apps.shimmer.p0.LocalMainEntry.current
+    var selectedRoute by rememberSaveable { mutableStateOf(entry.route) }
     var selectedTargetName by rememberSaveable { mutableStateOf(WallpaperTarget.HOME.name) }
-    val wallpaperTarget = WallpaperTargetUi.restoreTarget(selectedTargetName)
+    val requestedTarget = WallpaperTargetUi.restoreTarget(selectedTargetName)
+    var displayedTargetName by rememberSaveable { mutableStateOf(selectedTargetName) }
+    val wallpaperTarget = WallpaperTargetUi.restoreTarget(displayedTargetName)
+    val targetAlpha = remember { Animatable(1f) }
+    val requests = remember { TargetTransitionRequests(requestedTarget) }
+    val targetTicket = requests.select(requestedTarget)
+    val targetProgress by animateFloatAsState(requestedTarget.ordinal.toFloat(),
+        animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
+        label = "navigation-target-pill")
+    val targetBlocked = requestedTarget != wallpaperTarget || targetAlpha.isRunning || targetAlpha.value < 1f
+    LaunchedEffect(targetTicket) {
+        if (requestedTarget != WallpaperTargetUi.restoreTarget(displayedTargetName)) {
+            targetAlpha.animateTo(0f, tween(90))
+            if (!requests.isCurrent(targetTicket)) return@LaunchedEffect
+            displayedTargetName = requestedTarget.name
+        }
+        targetAlpha.animateTo(1f, tween(180))
+    }
+    val guide = LocalGuideController.current
+    val guideRequest = guide?.navigationRequest
+    LaunchedEffect(guideRequest?.serial) {
+        val request = guideRequest ?: return@LaunchedEffect
+        selectedRoute = request.route
+        if (request.userAction) guide?.routeSelected(request.route)
+        guide?.navigationHandled(request)
+    }
+    SideEffect { guide?.observeContext(requestedTarget.name) }
     // P9：动画切页会移除离开的页面，按路由保存列表位置、偏移和页面 rememberSaveable 状态。
     // 只读的预测返回预览不经过此容器，避免与正式图库共享保存键。
     val tabStateHolder = rememberSaveableStateHolder()
@@ -85,10 +124,17 @@ fun MainNavigation(
     val backdropFrame = rememberBackdropFrame(wallpaperTarget)
 
     androidx.compose.runtime.CompositionLocalProvider(
-        LocalWallpaperHeader provides WallpaperHeaderState(wallpaperTarget) { selectedTargetName = it.name },
+        LocalWallpaperHeader provides WallpaperHeaderState(requestedTarget) {
+            selectedTargetName = it.name
+            guide?.targetSelected(it.name)
+        },
+        LocalWallpaperPillProgress provides targetProgress,
+        LocalTargetContentTransition provides TargetContentTransition(targetAlpha.value, targetBlocked),
     ) {
     Box(modifier.fillMaxSize()) {
-        WallpaperBackdrop(backdropFrame)
+        Crossfade(targetState = backdropFrame, animationSpec = tween(240), label = "target-backdrop") {
+            WallpaperBackdrop(it)
+        }
         val floatingBar = LocalAppearanceSettings.current.floatingBottomBarEnabled
         Scaffold(
             // 透明容器，透出背后的模糊壁纸
@@ -101,7 +147,7 @@ fun MainNavigation(
                 if (!floatingBar) {
                     BottomNavigationBar(
                         selectedDestination = selectedDestination,
-                        onDestinationSelected = { selectedRoute = it.route }
+                        onDestinationSelected = { selectedRoute = it.route; guide?.routeSelected(it.route) }
                     )
                 }
             }
@@ -136,7 +182,7 @@ fun MainNavigation(
                                     selectedIndex = selectedIndex,
                                     tabCount = items.size,
                                     onTabSelected = { index ->
-                                        items.getOrNull(index)?.let { selectedRoute = it.route }
+                                        items.getOrNull(index)?.let { selectedRoute = it.route; guide?.routeSelected(it.route) }
                                     },
                                 )
                             } else {
@@ -169,7 +215,7 @@ fun MainNavigation(
             ) {
                 BottomNavigationBar(
                     selectedDestination = selectedDestination,
-                    onDestinationSelected = { selectedRoute = it.route }
+                    onDestinationSelected = { selectedRoute = it.route; guide?.routeSelected(it.route) }
                 )
             }
         }
@@ -246,9 +292,11 @@ private fun BottomNavigationBar(
                     icon = iconOf(destination),
                     label = stringResource(destination.titleRes),
                     onClick = { onDestinationSelected(destination) },
+                    modifier = Modifier.guideAnchor(GuideAnchor.PLAYBACK_TAB, destination == NavigationDestination.Playback),
                 )
             } else {
                 NavigationBarItem(
+                    modifier = Modifier.guideAnchor(GuideAnchor.PLAYBACK_TAB, destination == NavigationDestination.Playback),
                     selected = selected,
                     onClick = { onDestinationSelected(destination) },
                     // 标签已朗读 Tab 名称，图标不重复描述
@@ -272,6 +320,7 @@ private fun RowScope.FloatingTabItem(
     icon: ImageVector,
     label: String,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val contentColor = if (selected) {
         MaterialTheme.colorScheme.primary
@@ -279,7 +328,7 @@ private fun RowScope.FloatingTabItem(
         MaterialTheme.colorScheme.onSurfaceVariant
     }
     Column(
-        modifier = Modifier
+        modifier = modifier
             .weight(1f)
             .fillMaxHeight()
             // indication = null 去掉涟漪；role = Tab 保留无障碍语义

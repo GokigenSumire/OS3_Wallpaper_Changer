@@ -1,6 +1,7 @@
 package dev.abdus.apps.shimmer.ui.settings
 
 import android.widget.Toast
+import androidx.compose.material.icons.filled.Refresh
 import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.clickable
@@ -65,6 +66,7 @@ fun SettingsScreen(
             dev.abdus.apps.shimmer.ui.navigation.WallpaperPageTopAppBar(title = "设置")
         }
     ) { paddingValues ->
+        dev.abdus.apps.shimmer.ui.navigation.WallpaperTargetContent {
         if (uiState.isLoading) {
             Box(
                 modifier = Modifier
@@ -84,7 +86,6 @@ fun SettingsScreen(
                     .padding(tabContentPadding()),
                 verticalArrangement = Arrangement.spacedBy(Spacing.l)
             ) {
-                Text("应用外观 · 全局", style = MaterialTheme.typography.titleMedium)
                 // 外观设置卡片
                 AppearanceCard(
                     themeMode = uiState.themeMode,
@@ -99,8 +100,6 @@ fun SettingsScreen(
                     onBottomBarAlphaChange = { viewModel.setBottomBarAlpha(it) },
                     onFloatingBottomBarToggle = { viewModel.toggleFloatingBottomBar(it) }
                 )
-
-                Text("系统兼容", style = MaterialTheme.typography.titleMedium)
 
                 CompatModuleCard(
                     status = compatStatus,
@@ -125,10 +124,9 @@ fun SettingsScreen(
                     onDiagnosticsClick = { LegacyPages.openDiagnostics(context) },
                     onLockCapabilityClick = { context.startActivity(Intent(context, CapabilityActivity::class.java)) },
                 )
-                OutlinedButton(onClick = { showAbout = true }, modifier = Modifier.fillMaxWidth()) {
-                    Text("关于与版本")
-                }
+                dev.abdus.apps.shimmer.ui.settings.components.AboutVersionCard(onAbout = { showAbout = true })
             }
+        }
         }
     }
 
@@ -151,27 +149,24 @@ private fun CompatModuleCard(
             modifier = Modifier.fillMaxWidth().padding(Spacing.m),
             verticalArrangement = Arrangement.spacedBy(Spacing.s),
         ) {
-            Text("系统桌面手势兼容（可选）", style = MaterialTheme.typography.titleMedium)
-            Text(
-                when (status.availability) {
-                    CompatModuleEntry.Availability.NOT_INSTALLED -> "未安装（不影响主应用使用）"
-                    CompatModuleEntry.Availability.UNAVAILABLE -> "暂时无法读取模块安装状态"
-                    CompatModuleEntry.Availability.INSTALLED ->
-                        "已安装：${status.versionName ?: "版本名未提供"}（${status.versionCode}）"
-                },
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Text("可选：需Root／LSPosed，作用域为系统框架。", style = MaterialTheme.typography.bodySmall,
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("桌面手势兼容", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                IconButton(onClick = onRefresh) {
+                    Icon(androidx.compose.material.icons.Icons.Default.Refresh, contentDescription = "刷新安装状态")
+                }
+            }
+            Text("可选 · 需要Root／LSPosed，作用域为系统框架", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (status.availability == CompatModuleEntry.Availability.INSTALLED && !status.canOpen) {
-                Text("模块入口不可用，请检查模块是否被停用。", style = MaterialTheme.typography.bodyMedium)
-            }
-            Button(onClick = onOpen, enabled = status.canOpen, modifier = Modifier.fillMaxWidth()) {
-                Text("打开兼容模块")
-            }
-            TextButton(onClick = onRefresh, modifier = Modifier.fillMaxWidth()) {
-                Text("刷新安装状态")
-            }
+            dev.abdus.apps.shimmer.ui.settings.components.SettingsActionRow(
+                title = "打开兼容模块",
+                description = when (status.availability) {
+                    CompatModuleEntry.Availability.NOT_INSTALLED -> "未安装，不影响主应用使用"
+                    CompatModuleEntry.Availability.UNAVAILABLE -> "暂时无法读取安装状态"
+                    CompatModuleEntry.Availability.INSTALLED ->
+                        if (status.canOpen) "${status.versionName ?: "已安装"}（${status.versionCode}）" else "模块入口不可用，请检查应用状态"
+                },
+                onClick = onOpen, enabled = status.canOpen,
+            )
         }
     }
 }
@@ -188,59 +183,38 @@ private fun AdvancedCard(
     modifier: Modifier = Modifier,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
-    BlurredCard(
-        modifier = modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(Spacing.m),
-            verticalArrangement = Arrangement.spacedBy(Spacing.s)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable { expanded = !expanded },
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("高级", style = MaterialTheme.typography.titleMedium)
-                Text(if (expanded) "收起" else "展开", style = MaterialTheme.typography.bodyMedium)
+    val showFirstUseGuide = dev.abdus.apps.shimmer.ui.onboarding.LocalFirstUseGuide.current
+    BlurredCard(modifier = modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+        Column(Modifier.fillMaxWidth().padding(Spacing.m), verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            Text("高级", style = MaterialTheme.typography.titleMedium)
+            dev.abdus.apps.shimmer.ui.settings.components.SettingsActionRow(
+                "重新查看使用引导", "含三种手势操作练习", showFirstUseGuide)
+            HorizontalDivider()
+            Row(Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("调试与诊断", style = MaterialTheme.typography.bodyLarge)
+                    if (staticAcceptanceEnabled) Text("静态验收已开启", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary)
+                }
+                Text(if (expanded) "收起" else "展开", color = MaterialTheme.colorScheme.primary)
             }
-
-            if (expanded) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("静态验收", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            if (staticAcceptanceEnabled) "已暂停过渡动画" else "开启后暂停过渡，不改变播放顺序",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            androidx.compose.animation.AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Spacing.m)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("静态验收", style = MaterialTheme.typography.bodyLarge)
+                            Text("只暂停过渡动画，不暂停视频或自动换图", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Switch(checked = staticAcceptanceEnabled, onCheckedChange = onStaticAcceptanceToggle)
                     }
-                    Switch(checked = staticAcceptanceEnabled, onCheckedChange = onStaticAcceptanceToggle)
+                    dev.abdus.apps.shimmer.ui.settings.components.SettingsActionRow(
+                        "锁屏能力检查", "查看系统对锁屏壁纸的支持", onLockCapabilityClick)
+                    dev.abdus.apps.shimmer.ui.settings.components.SettingsActionRow(
+                        "诊断", "查看运行状态与排查信息", onDiagnosticsClick)
                 }
-
-                TextButton(onClick = onLockCapabilityClick, modifier = Modifier.fillMaxWidth()) {
-                    Text("锁屏能力检查", style = MaterialTheme.typography.bodyLarge)
-                }
-
-            // 诊断按钮：打开 P0 诊断页
-            TextButton(
-                onClick = onDiagnosticsClick,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Start
-                ) {
-                    Text("诊断", style = MaterialTheme.typography.bodyLarge)
-                }
-            }
-
             }
         }
     }
@@ -255,10 +229,18 @@ private fun AboutDialog(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.app_name)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(Spacing.s)) {
                 Text("版本：${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）")
-                Text("包名：${BuildConfig.APPLICATION_ID}")
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(BuildConfig.APPLICATION_ID, style = MaterialTheme.typography.bodySmall)
+                }
+                HorizontalDivider()
+                Text("个人壁纸管理：桌面与锁屏独立设置。")
+                dev.abdus.apps.shimmer.ui.components.ProjectInformationLinks()
+                HorizontalDivider()
                 Text("基于开源项目 Shimmer 修改，个人非商业使用。")
+                Text("保留原作者署名与许可；第三方声明及修改记录见项目仓库。")
             }
         },
         confirmButton = {

@@ -19,6 +19,8 @@ import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.size.Precision
 import dev.abdus.apps.shimmer.ui.components.BlurredCard
+import dev.abdus.apps.shimmer.ui.effects.BackdropBlurTransformation
+import dev.abdus.apps.shimmer.ui.effects.GlassEffectDefaults
 import dev.abdus.apps.shimmer.ui.theme.Spacing
 
 /** 预览只需卡片大小；按整图解码会让上万像素的全景图占用数百 MB。 */
@@ -60,7 +62,7 @@ fun CurrentImageCard(
                     .fillMaxWidth()
                     .height(180.dp)
                     .clip(MaterialTheme.shapes.medium)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                    .background(GlassEffectDefaults.cardContainerColor()),
                 contentAlignment = Alignment.Center
             ) {
                 if (previewFailed) {
@@ -70,6 +72,20 @@ fun CurrentImageCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
+                    // Only the small decorative image is blurred; the foreground remains sharp.
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(imageUri)
+                            .size(GlassEffectDefaults.BackdropDecodeSizePx)
+                            .precision(Precision.INEXACT)
+                            .allowHardware(false)
+                            .transformations(BackdropBlurTransformation())
+                            .diskCachePolicy(CachePolicy.DISABLED)
+                            .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
                             .data(imageUri)

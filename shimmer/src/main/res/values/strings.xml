@@ -23,6 +23,6 @@
     <string name="nav_playback">播放</string>
     <string name="nav_effects">特效</string>
     <string name="nav_settings">设置</string>
-    <string name="editor_switch_policy_label">切换：%1$s</string>
-    <string name="editor_switch_policy_description">切换图片时：%1$s</string>
+    <string name="editor_switch_policy_label">离开：%1$s</string>
+    <string name="editor_switch_policy_description">切换图片或返回退出时：%1$s</string>
 </resources>

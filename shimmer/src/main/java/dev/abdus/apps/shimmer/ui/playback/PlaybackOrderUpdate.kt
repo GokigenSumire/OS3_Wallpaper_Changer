@@ -16,19 +16,9 @@ object PlaybackOrderUpdate {
     /** 与 P2 页、壁纸服务相同的随机种子；种子不同会让同一轮随机顺序在两处不一致。 */
     const val RANDOM_SEED = 0x504C41594241434BL
 
-    fun toPlaybackOrder(order: PlayOrder): PlaybackOrder = when (order) {
-        PlayOrder.NATURAL_ASC -> PlaybackOrder.NATURAL_ASC
-        PlayOrder.NATURAL_DESC -> PlaybackOrder.NATURAL_DESC
-        PlayOrder.RANDOM -> PlaybackOrder.RANDOM
-        PlayOrder.MANUAL -> PlaybackOrder.MANUAL
-    }
+    fun toPlaybackOrder(order: PlayOrder): PlaybackOrder = PlaybackOrder.valueOf(order.name)
 
-    fun fromPlaybackOrder(order: PlaybackOrder?): PlayOrder = when (order) {
-        null, PlaybackOrder.NATURAL_ASC -> PlayOrder.NATURAL_ASC
-        PlaybackOrder.NATURAL_DESC -> PlayOrder.NATURAL_DESC
-        PlaybackOrder.RANDOM -> PlayOrder.RANDOM
-        PlaybackOrder.MANUAL -> PlayOrder.MANUAL
-    }
+    fun fromPlaybackOrder(order: PlaybackOrder?): PlayOrder = PlayOrder.valueOf((order ?: PlaybackOrder.NATURAL_ASC).name)
 
     /** 先保存选择，目录／排序展示另行重建；不提前改变真实当前图片、历史或各根保存点。 */
     fun select(latest: PlaybackSnapshot?, order: PlayOrder, manualSeed: List<String> = emptyList()): PlaybackSnapshot {

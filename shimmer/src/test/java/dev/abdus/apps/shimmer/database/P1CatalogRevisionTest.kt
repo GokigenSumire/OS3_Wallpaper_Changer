@@ -34,18 +34,21 @@ class P1CatalogRevisionTest {
     @After fun close() { database.close() }
     private suspend fun stamp(): P1CatalogStamp? = database.withTransaction { P1CatalogRevision.readVerified(database) }
 
-    @Test fun newDatabaseHasExactTwelveGuardsAndPersistentIdentity() = runBlocking {
+    @Test fun newDatabaseHasExactFifteenGuardsAndPersistentIdentity() = runBlocking {
         val first = stamp()!!
-        assertEquals(12, P1CatalogRevision.triggerDefinitions.size)
+        assertEquals(15, P1CatalogRevision.triggerDefinitions.size)
         P1CatalogRevision.install(database.openHelper.writableDatabase)
         assertEquals(first, stamp())
-        assertEquals(8, database.openHelper.readableDatabase.version)
+        assertEquals(10, database.openHelper.readableDatabase.version)
     }
 
-    @Test fun everyInsertUpdateAndDeleteOnAllFourTablesChangesRevision() = runBlocking {
+    @Test fun everyInsertUpdateAndDeleteOnAllFiveTablesChangesRevision() = runBlocking {
         val statements = listOf(
             "INSERT INTO sources(id,rootUri,kind) VALUES ('s','file:///s','DIRECTORY_TREE')",
             "UPDATE sources SET enabled=0 WHERE id='s'",
+            "INSERT INTO source_file_times(sourceId,nodeKey,createdMillis) VALUES ('s','dir:',1)",
+            "UPDATE source_file_times SET modifiedMillis=2 WHERE sourceId='s'",
+            "DELETE FROM source_file_times WHERE sourceId='s'",
             "INSERT INTO image_records(id,uri,displayName,relativePath) VALUES ('i','file:///i','i','i')",
             "UPDATE image_records SET displayName='new' WHERE id='i'",
             "INSERT INTO source_image_links(sourceId,imageId) VALUES ('s','i')",
@@ -146,7 +149,7 @@ class P1CatalogRevisionTest {
         }
     }
 
-    @Test fun migrationRunsAgainstActualExportedV7SchemaAndRoomValidatesV8() = runBlocking {
+    @Test fun migrationRunsAgainstActualExportedV7SchemaAndRoomValidatesV10() = runBlocking {
         // Windows的sqlite4java还需创建-journal／-wal／-shm，长方法目录与完整UUID会触及路径限制。
         val name = "m78-${UUID.randomUUID().toString().take(8)}.db"
         val fixturePath = app.getDatabasePath(name).absolutePath
@@ -178,9 +181,9 @@ class P1CatalogRevisionTest {
         }
         val migrated = Room.databaseBuilder(app, ShimmerDatabase::class.java, name).allowMainThreadQueries()
             .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-            .addMigrations(ShimmerDatabase.MIGRATION_7_8).addCallback(P1CatalogRevision.callback).build()
+            .addMigrations(ShimmerDatabase.MIGRATION_7_8, ShimmerDatabase.MIGRATION_8_9, ShimmerDatabase.MIGRATION_9_10).addCallback(P1CatalogRevision.callback).build()
         try {
-            assertEquals(8, migrated.openHelper.writableDatabase.version)
+            assertEquals(10, migrated.openHelper.writableDatabase.version)
             migrated.openHelper.writableDatabase.query("PRAGMA journal_mode").use {
                 assertTrue(it.moveToFirst()); assertEquals("wal", it.getString(0))
             }

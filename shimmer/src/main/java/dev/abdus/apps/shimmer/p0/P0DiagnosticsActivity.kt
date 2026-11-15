@@ -26,6 +26,8 @@ class P0DiagnosticsActivity : ComponentActivity() {
     private lateinit var summary: TextView
     private lateinit var engineActions: LinearLayout
     private lateinit var output: TextView
+    private lateinit var recentEvents: TextView
+    private var displayedControls: List<P0Controls.EngineControl>? = null
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
     private var importGeneration = 0
@@ -96,25 +98,62 @@ class P0DiagnosticsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val column = p0Column()
-        column.label("壁纸输入与生命周期诊断 · P0", 23f)
-        column.label("${BuildConfig.APPLICATION_ID}\n${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n" +
-            "此页可观察当前P2正式壁纸，无须切成P0实验壁纸。诊断不修复OS4手势；" +
-            "P2保留原切图／编辑行为。下方P0实验入口仅作对照，实验NEXT/PREV只计数。")
-        column.button("清空并开始新诊断") { confirmNewRun() }
-        column.button("开始诊断（保留已有记录）") {
+        column.button("返回设置") { finish() }
+        column.label("诊断与排查", 23f)
+        column.label("${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}） · ${BuildConfig.APPLICATION_ID}")
+        output = column.label("诊断不会自动启用或清空。开始记录后返回桌面复现问题，再导出结果。")
+
+        val stages = column.diagnosticSection("阶段入口 · P0～P11", tag = "diagnostic-stages")
+        DiagnosticStageEntries.entries.chunked(2).forEach { pair ->
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            pair.forEach { entry ->
+                row.addView(Button(this).apply {
+                    text = "P${entry.stage} ${entry.title}" + if (!entry.available) "\n暂未开放" else ""
+                    isAllCaps = false
+                    isEnabled = entry.available
+                    minHeight = (56 * resources.displayMetrics.density).toInt()
+                    setOnClickListener {
+                        if (entry.stage == 0) window.decorView.findViewWithTag<LinearLayout>("diagnostic-records")
+                            ?.requestRectangleOnScreen(android.graphics.Rect(0, 0, 1, 1), true)
+                        else DiagnosticStageEntries.intent(this@P0DiagnosticsActivity, entry.stage)?.let(::startActivity)
+                    }
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+            stages.addView(row)
+        }
+        stages.label("P6／P7按原计划延期。P2首次使用且未选择验收模式时会默认开启静态验收；P3为桌面编辑，锁屏请走安全编辑入口。")
+
+        val record = column.diagnosticSection("记录与导出", tag = "diagnostic-records")
+        record.diagnosticButtonRow("开始诊断（保留已有记录）" to {
             page.invalidateDisplay(); P0Diagnostics.setEnabled(true); refresh()
-        }
-        column.button("停止诊断") {
+        }, "停止诊断" to {
             page.invalidateDisplay(); P0Diagnostics.setEnabled(false); refresh()
+        })
+        record.button("导出当前诊断摘要与事件") {
+            val captured = page.beginExport(P0Diagnostics.snapshot("EXPORT_METADATA"))
+            if (captured == null) output.text = "已有导出选择尚未结束；本轮诊断仍保留。"
+            else try { exportDocument.launch(captured.fileName) }
+            catch (_: Exception) { page.takeExport(); output.text = "无法打开文件选择器；诊断记录保留。" }
         }
-        column.button("打开 P1 来源与数据") {
+        record.button("清空并开始新诊断") { confirmNewRun() }
+        record.label("清空需要确认，只影响诊断事件，不删除图片、来源、历史或编辑。")
+
+        val status = column.diagnosticSection("运行摘要", tag = "diagnostic-summary")
+        status.button("刷新摘要与 Engine 列表") { refresh() }
+        summary = status.label("")
+        val events = column.diagnosticSection("最近事件", collapsed = true, tag = "diagnostic-events")
+        recentEvents = events.label("")
+
+        engineActions = column.diagnosticSection("壁纸画面重建工具", collapsed = true, tag = "diagnostic-engines")
+        val lab = column.diagnosticSection("旧版工具与实验入口", collapsed = true, tag = "diagnostic-labs")
+        lab.label("仅在排查时使用。旧播放控制首次可能默认开启静态验收；实验壁纸不会替代正式播放功能。")
+        lab.diagnosticButtonRow("打开 P1 来源与数据" to {
             startActivity(Intent(this, P1SourcesActivity::class.java))
-        }
-        column.button("打开 P2 播放控制") {
+        }, "打开 P2 播放控制" to {
             startActivity(Intent(this, P2PlaybackActivity::class.java))
-        }
-        column.button("选择无隐私测试图片（可选）") { selectTestImage.launch(arrayOf("image/*")) }
-        column.button("P0实验壁纸预览／设置（不是P2）") {
+        })
+        lab.button("选择无隐私测试图片（可选）") { selectTestImage.launch(arrayOf("image/*")) }
+        lab.button("P0实验壁纸预览／设置（不是P2）") {
             try {
                 startActivity(Intent(WallpaperManager.ACTION_CHANGE_LIVE_WALLPAPER).putExtra(
                     WallpaperManager.EXTRA_LIVE_WALLPAPER_COMPONENT,
@@ -124,32 +163,29 @@ class P0DiagnosticsActivity : ComponentActivity() {
                 P0Diagnostics.event("APP", "PICKER_FAILED", "type=${failed.javaClass.simpleName}")
             }
         }
-        column.button("应用内编辑实验入口（对照）") { P0EditActivity.request(this, "APP_CONTROL", "C_OR_USER_TEST") }
-        column.button("打开真实 Surface 重建实验室") { startActivity(Intent(this, P0SurfaceLabActivity::class.java)) }
-        column.button("刷新摘要与 Engine 列表") { refresh() }
-        column.button("导出当前诊断摘要与事件") {
-            val captured = page.beginExport(P0Diagnostics.snapshot("EXPORT_METADATA"))
-            if (captured == null) {
-                output.text = "已有导出选择尚未结束；本轮诊断仍保留。"
-            } else {
-                try { exportDocument.launch(captured.fileName) }
-                catch (failed: Exception) {
-                    page.takeExport()
-                    output.text = "无法打开文件选择器；诊断记录保留。"
-                }
+        lab.button("应用内编辑实验入口（对照）") { P0EditActivity.request(this, "APP_CONTROL", "C_OR_USER_TEST") }
+        lab.button("打开真实 Surface 重建实验室") { startActivity(Intent(this, P0SurfaceLabActivity::class.java)) }
+
+        listOf("diagnostic-events", "diagnostic-engines", "diagnostic-labs").forEach { tag ->
+            if (savedInstanceState?.getBoolean(tag) == true) {
+                val body = window.decorView.findViewWithTag<LinearLayout>(tag)
+                body.visibility = android.view.View.VISIBLE
+                val header = (body.parent as LinearLayout).getChildAt(0) as Button
+                header.text = "${header.contentDescription} · 收起"
+                header.stateDescription = "已展开"
             }
         }
-        column.label("以下重建针对选定 Engine 的 EGLSurface/context，隐藏时等待下次可见执行；" +
-            "它们不等于 Android SurfaceHolder 被系统重新创建。")
-        engineActions = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        column.addView(engineActions)
-        summary = column.label("")
-        output = column.label("先清空并开始一次新诊断，再返回当前正式壁纸的解锁桌面操作；" +
-            "开始时应用遮挡桌面、visible=false是正常的。请求接收触摸不代表系统保证送达。")
+
         refresh()
     }
 
     override fun onResume() { super.onResume(); resumed = true; if (::summary.isInitialized) refresh() }
+    override fun onSaveInstanceState(outState: Bundle) {
+        listOf("diagnostic-events", "diagnostic-engines", "diagnostic-labs").forEach { tag ->
+            outState.putBoolean(tag, window.decorView.findViewWithTag<LinearLayout>(tag)?.visibility == android.view.View.VISIBLE)
+        }
+        super.onSaveInstanceState(outState)
+    }
     override fun onPause() { resumed = false; main.removeCallbacks(statusRefresh); super.onPause() }
     private fun confirmNewRun() {
         AlertDialog.Builder(this)
@@ -167,14 +203,25 @@ class P0DiagnosticsActivity : ComponentActivity() {
     }
     private fun refresh() {
         val snapshot = P0Diagnostics.snapshot("UI_REFRESH")
-        summary.text = snapshot.summary + "\n最近事件（完整事件可导出）\n" + snapshot.tail
+        summary.text = snapshot.summary
+        recentEvents.text = snapshot.tail.ifBlank { "暂无事件，完整记录可从上方导出。" }
         main.removeCallbacks(statusRefresh)
         if (resumed) main.postDelayed(statusRefresh, 1000)
-        engineActions.removeAllViews()
-        P0Controls.snapshot().forEach { control ->
-            engineActions.label(control.scope)
-            engineActions.button("重建该 Engine 的 EGLSurface") { control.rebuild(false); output.text = "已请求；返回桌面后检查实际重建事件。" }
-            engineActions.button("重建该 Engine 的 EGL context") { control.rebuild(true); output.text = "已请求；返回桌面后检查 context 代数。" }
+        val controls = P0Controls.snapshot()
+        if (controls != displayedControls) {
+            displayedControls = controls
+            engineActions.removeAllViews()
+            engineActions.label("隐藏时等待下次可见执行；以下是EGL重建，不等同系统重新创建SurfaceHolder。")
+            if (controls.isEmpty()) engineActions.label("暂无活动壁纸实例，请先应用正式壁纸后刷新。")
+            controls.forEach { control ->
+                engineActions.label(control.scope)
+                engineActions.button("重建该 Engine 的 EGLSurface") {
+                    control.rebuild(false); output.text = "已请求；返回桌面后检查实际重建事件。"
+                }
+                engineActions.button("重建该 Engine 的 EGL context") {
+                    control.rebuild(true); output.text = "已请求；返回桌面后检查 context 代数。"
+                }
+            }
         }
     }
     override fun onDestroy() {
@@ -205,4 +252,46 @@ internal fun LinearLayout.label(value: String, size: Float = 15f): TextView = Te
 }
 internal fun LinearLayout.button(value: String, action: () -> Unit): Button = Button(context).apply {
     text = value; setOnClickListener { action() }; this@button.addView(this)
+}
+
+
+private fun LinearLayout.diagnosticSection(title: String, collapsed: Boolean = false, tag: String): LinearLayout {
+    val density = resources.displayMetrics.density
+    fun dp(value: Int) = (value * density).toInt()
+    val section = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(14), dp(8), dp(14), dp(12))
+        val night = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(16).toFloat()
+            setColor(if (night) 0x188AB4F8 else 0x10174EA6)
+        }
+    }
+    addView(section, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, dp(8), 0, dp(8)) })
+    val body = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        this.tag = tag
+        visibility = if (collapsed) android.view.View.GONE else android.view.View.VISIBLE
+    }
+    if (collapsed) section.button("$title · 展开") {
+        body.visibility = if (body.visibility == android.view.View.VISIBLE) android.view.View.GONE else android.view.View.VISIBLE
+        (section.getChildAt(0) as Button).text = "$title · " + if (body.visibility == android.view.View.VISIBLE) "收起" else "展开"
+        (section.getChildAt(0) as Button).stateDescription = if (body.visibility == android.view.View.VISIBLE) "已展开" else "已收起"
+    }.apply { isAllCaps = false; contentDescription = title; stateDescription = "已收起" }
+    else section.label(title, 18f)
+    section.addView(body)
+    return body
+}
+
+private fun LinearLayout.diagnosticButtonRow(vararg actions: Pair<String, () -> Unit>) {
+    val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+    actions.forEach { (title, action) ->
+        row.addView(Button(context).apply {
+            text = title; isAllCaps = false
+            minHeight = (48 * resources.displayMetrics.density).toInt()
+            setOnClickListener { action() }
+        }, LinearLayout.LayoutParams(0, -2, 1f))
+    }
+    addView(row)
 }

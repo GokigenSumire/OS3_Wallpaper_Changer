@@ -129,6 +129,11 @@ class GalleryViewModel @JvmOverloads constructor(
                             type = GallerySourceSummary.type(entity.kind),
                             imageCount = images.size,
                             isEnabled = entity.enabled,
+                            imagesEnabled = entity.imagesEnabled,
+                            videosEnabled = entity.videosEnabled,
+                            imageMediaCount = images.count { it.mediaType == dev.abdus.apps.shimmer.p1.P1MediaTypes.IMAGE },
+                            videoMediaCount = images.count { it.mediaType == dev.abdus.apps.shimmer.p1.P1MediaTypes.VIDEO },
+                            unknownMediaCount = images.count { it.mediaType == dev.abdus.apps.shimmer.p1.P1MediaTypes.UNKNOWN },
                             subdirectoryCount = subdirectoryCount,
                             // P9-GALLERY-01：卡片预览图。chooseSourcePreview 的选法与旧 P1 页一致
                             // （目录取最后一张、单图/多图取第一张），所以两侧看到的是同一张。
@@ -173,6 +178,20 @@ class GalleryViewModel @JvmOverloads constructor(
                 _uiState.value = _uiState.value.copy(
                     message = "修改启用状态失败（${failed.javaClass.simpleName}）；已有配置保留。",
                 )
+            }
+        }
+    }
+
+    fun setSourceMediaEnabled(sourceId: String, video: Boolean, enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                val unknown = repository.setMediaEnabled(sourceId, video, enabled)
+                if (unknown > 0) _uiState.value = _uiState.value.copy(
+                    message = "$unknown 项类型待确认，重新扫描可更新；两类均开启时仍可播放。")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _uiState.value = _uiState.value.copy(message = "类型设置未保存，请重试")
             }
         }
     }

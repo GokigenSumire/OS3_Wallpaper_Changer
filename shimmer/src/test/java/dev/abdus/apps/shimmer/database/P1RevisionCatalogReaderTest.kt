@@ -607,7 +607,7 @@ class P1RevisionCatalogReaderTest {
         assertEquals(0, fullReads())
         assertEquals(1, stampReads())
         assertEquals(1, guardReads())
-        assertEquals(8, database.openHelper.readableDatabase.version)
+        assertEquals(10, database.openHelper.readableDatabase.version)
     }
 
     @Test

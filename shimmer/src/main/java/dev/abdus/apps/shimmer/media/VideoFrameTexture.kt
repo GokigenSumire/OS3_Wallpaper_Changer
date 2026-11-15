@@ -37,7 +37,9 @@ class VideoFrameTexture(
     val fillTexture: Int get() = textures[3]
     val state: MediaFrameState get() = session?.state ?: MediaFrameState.FALLBACK_ERROR
     private val currentFrame: Boolean get() = hasFrame && session?.let { it.producerReady && latchedGeneration == it.outputGeneration } == true
-    val showVideo: Boolean get() = hasFrame && (frozen || session?.transientlyPaused == true || currentFrame && (state == MediaFrameState.VIDEO || state == MediaFrameState.PREPARING))
+    val showVideo: Boolean get() = MediaFrameContinuity.show(hasFrame, currentFrame, frozen,
+        session?.transientlyPaused == true, session?.resumeFrameHeld == true, state)
+    val displayState: MediaFrameState get() = if (showVideo && (currentFrame || frozen)) MediaFrameState.VIDEO else state
     val presentationReady: Boolean get() = currentFrame || hasFrame && session?.transientlyPaused == true || state in setOf(MediaFrameState.STILL, MediaFrameState.ENDED,
         MediaFrameState.FALLBACK_ERROR, MediaFrameState.FALLBACK_HDR, MediaFrameState.FALLBACK_BUSY, MediaFrameState.FALLBACK_TIMEOUT)
     private val sourceSize = VideoBlurPlan.Size(width, height)

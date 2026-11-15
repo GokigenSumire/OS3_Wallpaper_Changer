@@ -46,6 +46,7 @@ fun EffectsScreen(
             dev.abdus.apps.shimmer.ui.navigation.WallpaperPageTopAppBar(title = "特效")
         }
     ) { paddingValues ->
+        dev.abdus.apps.shimmer.ui.navigation.WallpaperTargetContent {
         if (uiState.isLoading) {
             Box(
                 modifier = Modifier
@@ -114,6 +115,7 @@ fun EffectsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
         }
     }
 

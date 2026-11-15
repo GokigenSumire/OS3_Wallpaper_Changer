@@ -215,12 +215,13 @@ open class ShimmerWallpaperService : GLWallpaperService() {
         private val p2GestureDetector = P0GestureDetector(this@ShimmerWallpaperService) { action ->
             P0Diagnostics.event(diagnosticId, "P2_GESTURE", "preview=$isPreview action=$action hold=${editHold.holding}")
             if (routeAllowed && editHold.admitGesture()) {
+                val practice = if (isPreview) null else guidePractice.capture(wallpaperTarget, action, cachedImageSet?.id)
                 when (action) {
-                    P0GestureMachine.DOUBLE_NEXT -> requestImageCycle()
-                    P0GestureMachine.TRIPLE_PREV -> requestPlayback(PlaybackDirection.PREVIOUS)
+                    P0GestureMachine.DOUBLE_NEXT -> requestImageCycle(practice)
+                    P0GestureMachine.TRIPLE_PREV -> requestPlayback(PlaybackDirection.PREVIOUS, practice = practice)
                     // REQ-GES-02: the formal wallpaper always opens the editor; previews never do.
                     P0GestureMachine.TWO_FINGER_EDIT ->
-                        if (isPreview) handleGesture(TapGesture.TWO_FINGER_DOUBLE_TAP) else openEditor()
+                        if (isPreview) handleGesture(TapGesture.TWO_FINGER_DOUBLE_TAP) else openEditor(practice?.request?.id)
                 }
             }
         }
@@ -366,6 +367,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             if (pendingNativeLockRequest === request) {
                 pendingNativeLockRequest = null
                 pendingPlaybackDirection = null
+                pendingGuidePractice = null
                 pendingPlaybackDispatch = null
             }
             nativeLockRequest = null
@@ -379,6 +381,9 @@ open class ShimmerWallpaperService : GLWallpaperService() {
         }
 
         private val presentationEpoch = java.util.concurrent.atomic.AtomicLong()
+        private val guidePractice by lazy { dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeStore(this@ShimmerWallpaperService) }
+        @Volatile private var guidePresentation: Pair<ImageSet, dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeTicket>? = null
+        private var pendingGuidePractice: dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeTicket? = null
         override fun onPresentationInvalidated() {
             presentationEpoch.incrementAndGet()
             lastPresentedLockToken = null
@@ -398,6 +403,15 @@ open class ShimmerWallpaperService : GLWallpaperService() {
         }
 
         override fun onImagePresented(imageId: String, presentationToken: Any) {
+            val proof = guidePresentation
+            val practiceEpoch = presentationEpoch.get()
+            if (!isPreview && proof != null && proof.first === presentationToken) scope.launch {
+                if (routeAllowed && engineVisible && rendererReady && presentationEpoch.get() == practiceEpoch &&
+                    cachedImageSet === presentationToken && guidePresentation === proof) {
+                    guidePractice.presented(proof.second, imageId)
+                    guidePresentation = null
+                }
+            }
             if (wallpaperTarget != WallpaperTarget.LOCK || !diagnosticAlive || isPreview) return
             val epoch = presentationEpoch.get()
             if (nativeLockRequest == null && lastPresentedLockToken === presentationToken &&
@@ -455,6 +469,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
                     // No decode needed only if the real stored/current picture is already this A.
                     pendingSelectedImageId = null
                     pendingPlaybackDirection = null
+                    pendingGuidePractice = null
                     pendingPlaybackDispatch?.let { reportSchedule(it, SwitchOutcome.SUPERSEDED) }
                     loadGeneration++
                     cancelPlaybackStep(SwitchOutcome.SUPERSEDED)
@@ -463,6 +478,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
                 }
                 pendingSelectedImageId = itemId
                 pendingPlaybackDirection = null
+                pendingGuidePractice = null
                 pendingPlaybackDispatch?.let { reportSchedule(it, SwitchOutcome.SUPERSEDED) }
                 loadGeneration++
                 cancelPlaybackStep(SwitchOutcome.SUPERSEDED)
@@ -534,7 +550,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             if (runtimeInitialized || routeRevoked || !routeAllowed) return
             runtimeInitialized = true
             Log.d(TAG, "Engine onCreate: initializing renderer and resources")
-            renderer = ShimmerRenderer(this, this@ShimmerWallpaperService.applicationContext)
+            renderer = ShimmerRenderer(this, this@ShimmerWallpaperService.applicationContext, audioEligible = !isPreview, wallpaperTarget = wallpaperTarget)
             sampleMediaKeyguard()
             // Transition diagnostics come from the home-screen engine only, never from previews.
             if (!isPreview) renderer?.transitionStats = if (wallpaperTarget == WallpaperTarget.HOME) TransitionStats.shared else TransitionStats()
@@ -860,11 +876,13 @@ open class ShimmerWallpaperService : GLWallpaperService() {
                 val direction = pendingPlaybackDirection ?: return@launch
                 val dispatch = pendingPlaybackDispatch
                 val lockRequest = pendingNativeLockRequest
+                val practice = pendingGuidePractice
                 pendingPlaybackDirection = null
+                pendingGuidePractice = null
                 pendingPlaybackDispatch = null
                 pendingNativeLockRequest = null
                 if (lockRequest != null && nativeLockRequest !== lockRequest) return@launch
-                startPlayback(direction, dispatch, lockRequest = lockRequest)
+                startPlayback(direction, dispatch, lockRequest = lockRequest, practice = practice)
             }
         }
 
@@ -985,10 +1003,14 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             }
         }
 
-        private fun requestImageCycle() = requestPlayback(PlaybackDirection.NEXT)
+        private fun requestImageCycle(practice: dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeTicket? = null) = requestPlayback(PlaybackDirection.NEXT, practice = practice)
 
         /** [dispatch] is set for a P4 scheduled switch, whose outcome is reported exactly once. */
-        private fun requestPlayback(direction: PlaybackDirection, dispatch: ScheduleDispatch? = null) {
+        private fun requestPlayback(direction: PlaybackDirection, dispatch: ScheduleDispatch? = null) =
+            requestPlayback(direction, dispatch, null)
+
+        private fun requestPlayback(direction: PlaybackDirection, dispatch: ScheduleDispatch? = null,
+            practice: dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeTicket?) {
             if (!routeAllowed) {
                 nativeLockRequest?.let { finishNativeLock(it, "CANCELLED") }
                 dispatch?.let { reportSchedule(it, SwitchOutcome.DROPPED, "系统目标不匹配") }
@@ -999,7 +1021,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             // Start at the business request, not when Main eventually starts its coroutine.
             val timing = PlaybackStepTiming(SystemClock::elapsedRealtimeNanos)
             val work = PlaybackWorkEvidence(PlaybackWorkScope.NORMAL)
-            scope.launch { startPlayback(direction, dispatch, timing, work = work) }.invokeOnCompletion { failure ->
+            scope.launch { startPlayback(direction, dispatch, timing, work = work, practice = practice) }.invokeOnCompletion { failure ->
                 if (failure != null) reportPlaybackTiming(timing, direction, dispatch, work,
                     if (failure is CancellationException) PlaybackTimingResult.CANCELLED else PlaybackTimingResult.ERROR)
             }
@@ -1040,6 +1062,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             selectedImageId: String? = null,
             work: PlaybackWorkEvidence = PlaybackWorkEvidence(if (selectedImageId == null) PlaybackWorkScope.NORMAL else PlaybackWorkScope.SELECTED),
             lockRequest: NativeLockRequest? = null,
+            practice: dev.abdus.apps.shimmer.ui.onboarding.GuidePracticeTicket? = null,
         ) {
             if (lockRequest == null) nativeLockRequest?.let { finishNativeLock(it, "CANCELLED") }
             if (selectedImageId != null) timing.markSelected()
@@ -1078,6 +1101,11 @@ open class ShimmerWallpaperService : GLWallpaperService() {
                 reportPlaybackTiming(timing, direction, dispatch, work, PlaybackTimingResult.NOT_READY)
                 return
             }
+            val actualPractice = practice ?: lockRequest?.let {
+                guidePractice.capture(wallpaperTarget,
+                    if (direction == PlaybackDirection.NEXT) P0GestureMachine.DOUBLE_NEXT else P0GestureMachine.TRIPLE_PREV,
+                    cachedImageSet?.id)
+            }
             if (!sourceRestoreOnly && renderer?.isAnimating() == true) {
                 if (selectedImageId != null) {
                     pendingSelectedImageId = selectedImageId
@@ -1089,6 +1117,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
                 pendingPlaybackDirection = direction
                 pendingPlaybackDispatch = dispatch
                 pendingNativeLockRequest = lockRequest
+                pendingGuidePractice = actualPractice
                 // This is deferred, not a presented image. Replay owns a new business attempt.
                 reportPlaybackTiming(timing, direction, dispatch, work, PlaybackTimingResult.DEFERRED_TRANSITION)
                 return
@@ -1097,6 +1126,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             // A direct restore/reblur load must not race a newer playback request.
             imageLoadingJob?.cancel()
             cancelPlaybackStep(SwitchOutcome.SUPERSEDED)
+            guidePresentation = null
             activeDispatch = dispatch
             val generation = ++loadGeneration
             lockRequest?.generation = generation
@@ -1238,6 +1268,8 @@ open class ShimmerWallpaperService : GLWallpaperService() {
                                 return@launch
                             }
                             timing.measure(PlaybackTimingStage.COMMIT) {
+                                if (!isPreview && actualPractice != null && !outcome.sourceRestored && selectedImageId == null)
+                                    guidePresentation = outcome.image to actualPractice
                                 updateActiveImageSet(outcome.image, outcome.uri, outcome.transform,
                                     direction.takeUnless { outcome.sourceRestored || selectedImageId != null }) {
                                     handoff.transfer(outcome.image)
@@ -1297,7 +1329,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
                     // 接管完成且没有新请求抢先；结束当前 job 的归属，避免重放时取消自己。
                     if (imageCycleJob === currentCoroutineContext()[Job]) imageCycleJob = null
                     if (activeDispatch === dispatch) activeDispatch = null
-                    startPlayback(nextDirection, dispatch)
+                    startPlayback(nextDirection, dispatch, practice = actualPractice)
                 }
             }
             // A scope can be cancelled before this launch executes any body/finally at all.
@@ -1467,6 +1499,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
                 cancelPlaybackStep(SwitchOutcome.CANCELLED)
                 imageLoadingJob?.cancel()
                 pendingPlaybackDirection = null
+                pendingGuidePractice = null
                 pendingPlaybackDispatch?.let { reportSchedule(it, SwitchOutcome.CANCELLED) }
                 parkedDispatch?.let { reportSchedule(it, SwitchOutcome.CANCELLED) }
             }
@@ -1537,6 +1570,7 @@ open class ShimmerWallpaperService : GLWallpaperService() {
             activeDispatch?.let { reportSchedule(it, SwitchOutcome.SUPERSEDED, "直接设图") }
             pendingPlaybackDispatch?.let {
                 pendingPlaybackDirection = null
+                pendingGuidePractice = null
                 reportSchedule(it, SwitchOutcome.SUPERSEDED, "直接设图")
             }
             scope.launch {
@@ -1659,16 +1693,18 @@ open class ShimmerWallpaperService : GLWallpaperService() {
         }
 
         /** Formal wallpaper two-finger double tap. The editor measures entry from [gestureUptime]. */
-        private fun openEditor() {
+        private fun openEditor() = openEditor(null)
+
+        private fun openEditor(practiceSession: String?) {
             if (routeAllowed && !isPreview && wallpaperTarget == WallpaperTarget.LOCK) {
-                LockEditorBridge.launch(this@ShimmerWallpaperService, diagnosticId)
+                LockEditorBridge.launch(this@ShimmerWallpaperService, diagnosticId, practiceSession)
                 return
             }
             if (!routeAllowed || wallpaperTarget != WallpaperTarget.HOME) return
             val gestureUptime = android.os.SystemClock.uptimeMillis()
             P0Diagnostics.event(diagnosticId, "P3_EDIT_REQUEST", "cached=${cachedImageSet != null}")
             try {
-                P3EditActivity.launch(this@ShimmerWallpaperService, diagnosticId, gestureUptime)
+                P3EditActivity.launch(this@ShimmerWallpaperService, diagnosticId, gestureUptime, practiceSession)
             } catch (failed: Exception) {
                 // A blocked or failed launch must not look like an opened editor.
                 Log.w(TAG, "P3 editor launch failed", failed)
